@@ -113,20 +113,13 @@ def select_embeddings(first_list, second_list, n=None, k=None):
         )
         min_distance = distances[0]
 
-        # Use negative distance for max-heap behavior in min-heap
-        neg_distance = -min_distance
-
-        if len(heap) < k:
-            heapq.heappush(heap, (neg_distance, file))
+        if len(heap) < k: 
+            heapq.heappush(heap, (min_distance, file))
         else:
-            if neg_distance > heap[0][0]:
-                heapq.heappushpop(heap, (neg_distance, file))
+            if min_distance > heap[0][0]: 
+                heapq.heappushpop(heap, (min_distance, file)) 
 
     # Extract the embeddings from the heap
-    top_embeddings = [heapq.heappop(heap) for _ in range(len(heap))]
-    top_embeddings.reverse()  # Largest distances first
-
-    # Get the file paths
-    selected_emb_paths = [item[1] for item in top_embeddings]
-
+    selected_emb_paths = [heapq.heappop(heap)[1] for _ in range(len(heap))]
+    
     return selected_emb_paths
