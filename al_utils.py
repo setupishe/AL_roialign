@@ -120,6 +120,6 @@ def select_embeddings(first_list, second_list, n=None, k=None):
                 heapq.heappushpop(heap, (min_distance, file)) 
 
     # Extract the embeddings from the heap
-    selected_emb_paths = [heapq.heappop(heap)[1] for _ in range(len(heap))]
+    selected_emb_paths = [item[1] for item in heap]
     
     return selected_emb_paths
