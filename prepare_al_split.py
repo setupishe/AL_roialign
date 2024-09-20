@@ -14,8 +14,14 @@ if __name__ == "__main__":
     args = parser.parse_args()
     from_fraction = float(args.from_fraction)
     to_fraction = float(args.to_fraction)
+    txt_path = f"/home/setupishe/datasets/coco/train2017_{from_fraction}_active.txt"
+    if not os.path.exists(txt_path):
+        print('Taking random split as base...')
+        txt_path = txt_path.replace('active', '')
+    else:
+        print('Taking active split as base...')
 
-    with open(f"/home/setupishe/datasets/coco/train2017_{from_fraction}.txt", "r") as f:
+    with open(txt_path, "r") as f:
         lines = f.readlines()
         from_names = [os.path.basename(x)[:-1] for x in lines]
 
@@ -259,15 +265,12 @@ if __name__ == "__main__":
         print("Skipping, selected embeds already exist...")
     else:
         selected = select_embeddings(
-            first_list, second_list, k=target_num * 2.5
+            first_list, second_list, k=target_num * (1 - 0.008)
         )
         pickle_save(selected_path, selected)
 
     print('\n===============Creating split with correct frg/bg proportion...===============')
-    uniq = set()
-    for file in selected:
-        uniq.add(os.path.basename(file).split("_")[0])
-    not_bgs = [x + ".jpg" for x in random.sample(list(uniq), int(target_num * (1 - 0.008)))]
+    not_bgs = [x + ".jpg" for x in selected]
 
     free_bgs = []
     for file in tqdm(

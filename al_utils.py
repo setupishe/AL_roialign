@@ -102,7 +102,7 @@ def select_embeddings(first_list, second_list, n=None, k=None):
     k = total_embeddings // n if n is not None else k
     print(f"Selecting top {k} embeddings with the largest distances.")
 
-    heap = []  # Min-heap to keep track of top-k largest distances
+    embeds_with_distances = []  # Min-heap to keep track of top-k largest distances
 
     for file in tqdm(second_list):
         emb = np.load(file).squeeze(0)
@@ -112,14 +112,16 @@ def select_embeddings(first_list, second_list, n=None, k=None):
             emb, 1, include_distances=True
         )
         min_distance = distances[0]
-
-        if len(heap) < k: 
-            heapq.heappush(heap, (min_distance, file))
-        else:
-            if min_distance > heap[0][0]: 
-                heapq.heappushpop(heap, (min_distance, file)) 
-
+        embeds_with_distances.append((min_distance, file))
     # Extract the embeddings from the heap
-    selected_emb_paths = [item[1] for item in heap]
+    sorted_embeds = sorted(embeds_with_distances, key=lambda x: x[0], reverse=True)
     
-    return selected_emb_paths
+    res = set()
+    for pair in sorted_embeds:
+        name = os.path.basename(pair[1]).split("_")[0]
+        if len(res) < k:
+            res.add(name)
+        else:
+            break
+
+    return list(res)
