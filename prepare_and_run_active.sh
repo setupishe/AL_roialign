@@ -1,2 +1,2 @@
-python3 prepare_al_split.py --from-fraction 0.4 --to-fraction 0.5 --weights /home/setupishe/ultralytics/runs/detect/active_0.4/weights/best.pt --conf 0.32 --cleanup
+python3 prepare_al_split.py --from-fraction 0.4 --to-fraction 0.5 --weights /home/setupishe/ultralytics/runs/detect/active_0.4/weights/best.pt --conf 0.304 --cleanup
 yolo detect mode=train model=yolov8m.pt pretrained=False data=coco_0.5_active.yaml batch=48 name=active_0.5 epochs=65
