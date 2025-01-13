@@ -6,3 +6,4 @@
 /yolov8n.pt
 /*embeds*/*
 *.pickle
+*.joblib
