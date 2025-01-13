@@ -5,3 +5,4 @@
 /yolov8m.pt
 /yolov8n.pt
 /*embeds*/*
+*.pickle
