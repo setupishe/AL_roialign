@@ -11,18 +11,31 @@ if __name__ == "__main__":
     parser.add_argument("--to-fraction")
     parser.add_argument("--from-split")
     parser.add_argument("--weights")
-    parser.add_argument("--name")
-    parser.add_argument("--conf")
+    parser.add_argument("--split-name")
+    parser.add_argument("--dataset-name")
+    parser.add_argument("--bg2all-ratio")
     parser.add_argument("--mode", default="distance")
     parser.add_argument("--cleanup", action="store_true")  # on/off flag
+    parser.add_argument("--seg2line", action="store_true")  # on/off flag
+
     args = parser.parse_args()
+
     from_fraction = float(args.from_fraction)
     to_fraction = float(args.to_fraction)
     from_split = args.from_split
+    weights = args.weights
+    bg2all_ratio = float(args.bg2all_ratio)
     mode = args.mode
-    split_name = args.name
+    dataset_name = args.dataset_name
+    split_name = args.split_name
+    cleanup = args.cleanup
+    seg2line = args.seg2line
 
-    txt_path = f"/home/setupishe/datasets/coco/{from_split}"
+    conf_path = "/".join(weights.split("/")[:-2]) + "/best_conf.txt"
+    with open(conf_path, "r") as f:
+        conf = float(f.readline())
+
+    txt_path = f"/home/setupishe/datasets/{dataset_name}/{from_split}"
 
     with open(txt_path, "r") as f:
         lines = f.readlines()
@@ -32,7 +45,7 @@ if __name__ == "__main__":
         "\n===============Populating image dir with corresponding formatted anno files...==============="
     )
 
-    original_dataset = "/home/setupishe/datasets/coco/images/train2017/"
+    original_dataset = f"/home/setupishe/datasets/{dataset_name}/images/train/"
     if len(filelist := glob.glob(f"{original_dataset}*jpg")) == len(
         glob.glob(f"{original_dataset}*txt")
     ):
@@ -41,15 +54,17 @@ if __name__ == "__main__":
         for file in tqdm(filelist):
             label_file = file.replace("images", "labels").replace("jpg", "txt")
             if os.path.exists(label_file):
-                segfile2bboxfile(label_file, file.replace("jpg", "txt"))
+                segfile2bboxfile(
+                    label_file, file.replace("jpg", "txt"), seg2line=seg2line
+                )
             else:
                 os.mknod(file.replace("jpg", "txt"))
 
-    onnx_path = args.weights.replace(".pt", ".onnx")
+    onnx_path = weights.replace(".pt", ".onnx")
 
     if not os.path.exists(onnx_path):
         print("\n===============Converting weights to onnx===============")
-        cmd = f"yolo export model={args.weights} format=onnx imgsz=640"
+        cmd = f"yolo export model={weights} format=onnx imgsz=640"
         os.system(cmd)
 
     print("\n===============Infering model on all available data...===============")
@@ -72,88 +87,7 @@ if __name__ == "__main__":
             shutil.rmtree(embeds_dir)
 
     if compute_embeds:
-        output_alias_names = {
-            "0": "person",
-            "1": "bicycle",
-            "2": "car",
-            "3": "motorcycle",
-            "4": "airplane",
-            "5": "bus",
-            "6": "train",
-            "7": "truck",
-            "8": "boat",
-            "9": "traffic light",
-            "10": "fire hydrant",
-            "11": "stop sign",
-            "12": "parking meter",
-            "13": "bench",
-            "14": "bird",
-            "15": "cat",
-            "16": "dog",
-            "17": "horse",
-            "18": "sheep",
-            "19": "cow",
-            "20": "elephant",
-            "21": "bear",
-            "22": "zebra",
-            "23": "giraffe",
-            "24": "backpack",
-            "25": "umbrella",
-            "26": "handbag",
-            "27": "tie",
-            "28": "suitcase",
-            "29": "frisbee",
-            "30": "skis",
-            "31": "snowboard",
-            "32": "sports ball",
-            "33": "kite",
-            "34": "baseball bat",
-            "35": "baseball glove",
-            "36": "skateboard",
-            "37": "surfboard",
-            "38": "tennis racket",
-            "39": "bottle",
-            "40": "wine glass",
-            "41": "cup",
-            "42": "fork",
-            "43": "knife",
-            "44": "spoon",
-            "45": "bowl",
-            "46": "banana",
-            "47": "apple",
-            "48": "sandwich",
-            "49": "orange",
-            "50": "broccoli",
-            "51": "carrot",
-            "52": "hot dog",
-            "53": "pizza",
-            "54": "donut",
-            "55": "cake",
-            "56": "chair",
-            "57": "couch",
-            "58": "potted plant",
-            "59": "bed",
-            "60": "dining table",
-            "61": "toilet",
-            "62": "tv",
-            "63": "laptop",
-            "64": "mouse",
-            "65": "remote",
-            "66": "keyboard",
-            "67": "cell phone",
-            "68": "microwave",
-            "69": "oven",
-            "70": "toaster",
-            "71": "sink",
-            "72": "refrigerator",
-            "73": "book",
-            "74": "clock",
-            "75": "vase",
-            "76": "scissors",
-            "77": "teddy bear",
-            "78": "hair drier",
-            "79": "toothbrush",
-        }
+        output_alias_names = {}
 
         # ========================================
         netron_layer_names = [
@@ -167,7 +101,7 @@ if __name__ == "__main__":
             dir_path=original_dataset,
             embedding_and_crops_save_dir=embeds_dir,
             from_annotations_in_dir=True,
-            conf_thres=float(args.conf),
+            conf_thres=float(conf),
             iou_thres=0.4,
             n=-1,
             random_images=False,
@@ -279,7 +213,7 @@ if __name__ == "__main__":
         print("Skipping, selected embeds already exist...")
     else:
         selected = select_embeddings(
-            first_list, second_list, k=target_num * (1 - 0.008), mode=mode
+            first_list, second_list, k=target_num * (1 - bg2all_ratio), mode=mode
         )
         pickle_save(selected_path, selected)
 
@@ -290,7 +224,9 @@ if __name__ == "__main__":
 
     free_bgs = []
     for file in tqdm(
-        glob.glob("/home/setupishe/datasets/coco/labels/train2017/*txt", recursive=True)
+        glob.glob(
+            f"/home/setupishe/datasets/{dataset_name}/labels/train/*txt", recursive=True
+        )
     ):
         name = os.path.basename(file)
         if not os.path.getsize(file) and name not in from_names:
@@ -298,25 +234,27 @@ if __name__ == "__main__":
 
     bgs = [
         os.path.basename(x).replace("txt", "jpg")
-        for x in random.sample(free_bgs, int(target_num * 0.008))
+        for x in random.sample(free_bgs, int(target_num * bg2all_ratio))
     ]
-    res_path = f"/home/setupishe/datasets/coco/train2017_{to_fraction}_{split_name}.txt"
+    res_path = (
+        f"/home/setupishe/datasets/{dataset_name}/train_{to_fraction}_{split_name}.txt"
+    )
 
     with open(res_path, "w") as f:
-        f.writelines([f"./images/train2017/{x}\n" for x in from_names + not_bgs + bgs])
+        f.writelines([f"./images/train/{x}\n" for x in from_names + not_bgs + bgs])
 
     print(f"`{res_path}` saved successfully.")
 
-    yaml_path = f"/home/setupishe/ultralytics/ultralytics/cfg/datasets/coco_{to_fraction}_{split_name}.yaml"
+    yaml_path = f"/home/setupishe/ultralytics/ultralytics/cfg/datasets/{dataset_name}_{to_fraction}_{split_name}.yaml"
     with open(
-        "/home/setupishe/ultralytics/ultralytics/cfg/datasets/coco.yaml", "r"
+        f"/home/setupishe/ultralytics/ultralytics/cfg/datasets/{dataset_name}.yaml", "r"
     ) as from_file:
         lines = from_file.readlines()
 
     for i, line in enumerate(lines):
-        if "train: train2017.txt" in line:
+        if "train: train.txt" in line:
             lines[i] = lines[i].replace(
-                "train2017.txt", f"train2017_{to_fraction}_{split_name}.txt"
+                "train.txt", f"train_{to_fraction}_{split_name}.txt"
             )
     with open(
         yaml_path,
@@ -325,7 +263,7 @@ if __name__ == "__main__":
         to_file.writelines(lines)
     print(f"`{yaml_path}` saved successfully.")
 
-    if args.cleanup:
+    if cleanup:
         print("\n===============Cleaning up...===============")
 
         for file in glob.glob(f"{original_dataset}*txt"):
