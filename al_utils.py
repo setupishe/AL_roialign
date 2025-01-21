@@ -66,12 +66,13 @@ def segline2bboxline(line, shape):
     return res
 
 
-def segfile2bboxfile(filepath, to_path):
+def segfile2bboxfile(filepath, to_path, seg2line=True):
     with open(filepath, "r") as f:
         lines = [x.rstrip("\n") for x in f.readlines()]
     new_lines = []
     for line in lines:
-        line = segline2bboxline(line, get_shape(txt2jpg(filepath)))
+        if seg2line:
+            line = segline2bboxline(line, get_shape(txt2jpg(filepath)))
 
         new_lines.append(line + "\n")
     with open(to_path, "w") as f:
@@ -134,7 +135,7 @@ def select_embeddings(first_list, second_list, n=None, k=None, mode="distance"):
         if mode == "distance":
             min_distance = distances[0]
         else:
-            min_distance = sum([1/(d**2 + 1e-6) for d in distances])
+            min_distance = sum([1 / (d**2 + 1e-6) for d in distances])
 
         embeds_with_distances.append((min_distance, file))
     # Extract the embeddings from the heap
