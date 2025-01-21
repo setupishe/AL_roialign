@@ -7,10 +7,12 @@ parser.add_argument("--from-fraction")
 parser.add_argument("--to-fraction")
 parser.add_argument("--from-split")
 parser.add_argument("--dataset-name")
+parser.add_argument("--bg2all-ratio")
 parser.add_argument("--default-split")
 parser.add_argument("--weights")
 parser.add_argument("--split-name")
 parser.add_argument("--cleanup", action="store_true")  # on/off flag
+parser.add_argument("--seg2line", action="store_true")  # on/off flag
 
 args = parser.parse_args()
 
@@ -20,8 +22,10 @@ from_split = args.from_split
 dataset_name = args.dataset_name
 default_split = args.default_split
 weights = args.weights
+bg2all_ratio = float(args.bg2all_ratio)
 split_name = args.split_name
 cleanup = args.cleanup
+seg2line = args.seg2line
 
 # # CLI arguments
 
@@ -41,7 +45,7 @@ cleanup = args.cleanup
 iou_threshold = 0.7  # ultralytics default
 
 dataset_folder = f"/home/setupishe/datasets/{dataset_name}"
-to_split = f"train2017_{to_fraction}_{split_name}.txt"
+to_split = f"train_{to_fraction}_{split_name}.txt"
 from_split = os.path.join(dataset_folder, from_split)
 to_split = os.path.join(dataset_folder, to_split)
 default_split = os.path.join(dataset_folder, default_split)
@@ -58,7 +62,6 @@ def txt2filelist(filepath):
 
 from_split_lst = txt2filelist(from_split)
 default_split_lst = txt2filelist(default_split)
-bg2all_ratio = 0.008
 
 num_total = len(default_split_lst) * (to_fraction - from_fraction)
 bg_num = int(num_total * bg2all_ratio)
@@ -69,7 +72,10 @@ inference_list = list(set(default_split_lst) - set(from_split_lst))
 inference_filepath = "inference_list.txt"
 with open(inference_filepath, "w") as f:
     f.writelines([dataset_folder + item[1:] + "\n" for item in inference_list])
+
 inference_name = "inference_results"
+preds_folder = f"/home/setupishe/ultralytics/runs/detect/{inference_name}/labels"
+
 cmd = f"yolo predict model={weights} source='{inference_filepath}' conf={conf} iou={iou_threshold} name={inference_name} save=False save_conf=True save_txt=True batch=64"
 
 
@@ -81,7 +87,8 @@ def prettyprint(msg):
 
 
 prettyprint("Infering model...")
-os.system(cmd)
+if not os.path.exists(preds_folder):
+    os.system(cmd)
 
 
 def segline2bboxline(line, shape):
@@ -183,8 +190,6 @@ def txt2anno(txt, shape=None, verbose=True, seg2line=False, absolute_bbox=False)
 
 from al_utils import *
 
-preds_folder = f"/home/setupishe/ultralytics/runs/detect/{inference_name}/labels"
-
 
 def bb_iou(boxA, boxB):
     # determine the (x, y)-coordinates of the intersection rectangle
@@ -237,7 +242,7 @@ for img_path in tqdm(inference_list):
     name = os.path.basename(img_path)
 
     pred_path = os.path.join(preds_folder, jpg2txt(name))
-    label_path = os.path.join(dataset_folder, "labels/train2017", jpg2txt(name))
+    label_path = jpg2txt(dataset_folder + img_path[1:])
 
     if not os.path.exists(pred_path):
         os.mknod(pred_path)
@@ -246,7 +251,7 @@ for img_path in tqdm(inference_list):
 
     preds_anno = txt2anno(pred_path)
     labels_anno = txt2anno(
-        label_path, seg2line=True, shape=get_shape(txt2jpg(label_path))
+        label_path, seg2line=seg2line, shape=get_shape(txt2jpg(label_path))
     )
     if len(labels_anno) == 0:
         sample.status = "bg"
@@ -292,7 +297,7 @@ with open(to_split, "w") as f:
 
 to_yaml = f"{dataset_name}_{to_fraction}_{split_name}.yaml"
 yaml_folder = f"/home/setupishe/ultralytics/ultralytics/cfg/datasets"
-original_yaml = "{dataset_name}.yaml"
+original_yaml = f"{dataset_name}.yaml"
 
 
 with open(os.path.join(yaml_folder, original_yaml), "r") as from_file:
