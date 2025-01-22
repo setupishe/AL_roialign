@@ -17,7 +17,7 @@ for range in "${ranges[@]}"; do
   echo "PREPARING ON FRACTION $range FOR FRACTION $next_range"
   
   # Run the preparation script with the calculated arguments
-  python3 prepare_al_split.py \
+  python3 conf_criteria.py \
     --weights /home/setupishe/ultralytics/runs/detect/VOC_${folder_name}_$range/weights/best.pt \
     --from-fraction $range \
     --to-fraction 0$next_range \
