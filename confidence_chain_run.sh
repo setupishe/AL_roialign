@@ -8,7 +8,7 @@ for range in "${ranges[@]}"; do
   # Calculate the next range value using bc for floating-point arithmetic
   next_range=$(echo "$range + 0.1" | bc)
 
-  folder_name="distance"
+  folder_name="confidences"
   if [[ "$range" == "0.2" ]]; then
     folder_name="random"
   fi
