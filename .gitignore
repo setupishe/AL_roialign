@@ -6,3 +6,4 @@
 *.pickle
 *.joblib
 *.pt
+*.yaml
