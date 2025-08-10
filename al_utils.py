@@ -143,9 +143,10 @@ def select_embeddings(first_list, second_list, n=None, k=None, mode="distance"):
     sorted_embeds = sorted(embeds_with_distances, key=lambda x: x[0], reverse=reverse)
     res = set()
     for pair in sorted_embeds:
-        name = os.path.basename(pair[1]).split("_")[0]
+        name = os.path.basename(pair[1])
+        img_name = name[: name.index("_cropped")]
         if len(res) < k:
-            res.add(name)
+            res.add(img_name)
         else:
             break
 

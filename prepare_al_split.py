@@ -11,6 +11,7 @@ if __name__ == "__main__":
     parser.add_argument("--to-fraction")
     parser.add_argument("--from-split")
     parser.add_argument("--weights")
+    parser.add_argument("--device")
     parser.add_argument("--split-name")
     parser.add_argument("--dataset-name")
     parser.add_argument("--bg2all-ratio")
@@ -24,6 +25,7 @@ if __name__ == "__main__":
     to_fraction = float(args.to_fraction)
     from_split = args.from_split
     weights = args.weights
+    device = args.device
     bg2all_ratio = float(args.bg2all_ratio)
     mode = args.mode
     dataset_name = args.dataset_name
@@ -35,17 +37,28 @@ if __name__ == "__main__":
     with open(conf_path, "r") as f:
         conf = float(f.readline())
 
-    txt_path = f"/home/setupishe/datasets/{dataset_name}/{from_split}"
+    txt_path = f"/ssd/temp/{dataset_name}/{from_split}"
+
+    import time
+
+    def check_busy():
+        while len((embeds_names := glob.glob("/ssd/temp/*embeds*"))) > 0:
+            if any([split_name in x for x in embeds_names]):
+                break
+            else:
+                print("waiting 1 more minute, someone else is active learning too...")
+                time.sleep(60)
+
+    check_busy()
 
     with open(txt_path, "r") as f:
         lines = f.readlines()
         from_names = [os.path.basename(x)[:-1] for x in lines]
-
     print(
         "\n===============Populating image dir with corresponding formatted anno files...==============="
     )
 
-    original_dataset = f"/home/setupishe/datasets/{dataset_name}/images/train/"
+    original_dataset = f"/ssd/temp/{dataset_name}/images/train/"
     if len(filelist := glob.glob(f"{original_dataset}*jpg")) == len(
         glob.glob(f"{original_dataset}*txt")
     ):
@@ -69,7 +82,7 @@ if __name__ == "__main__":
 
     print("\n===============Infering model on all available data...===============")
 
-    embeds_dir = f"/home/setupishe/bel_conf/embeds_{from_fraction}"
+    embeds_dir = f"/ssd/temp/embeds_{from_fraction}_{split_name}"
     print("Estimating total embeds amount...")
     total_embeds_count = 0
     for file in tqdm(glob.glob(f"{original_dataset}*txt")):
@@ -95,8 +108,15 @@ if __name__ == "__main__":
             "/model.22/Concat_1",  # (1, 66, 24, 40)
             "/model.22/Concat_2",  # (1, 66, 12, 20)
         ]
-
-        yep = YoloEmbeddingsProducer(onnx_path, netron_layer_names, output_alias_names)
+        provider = [
+            (
+                "CUDAExecutionProvider",
+                {"device_id": device},
+            )
+        ]
+        yep = YoloEmbeddingsProducer(
+            onnx_path, netron_layer_names, output_alias_names, providers=provider
+        )
         yep.produce_embeddings_for_dir(
             dir_path=original_dataset,
             embedding_and_crops_save_dir=embeds_dir,
@@ -110,7 +130,7 @@ if __name__ == "__main__":
 
     print("\n===============Preprocessing embeds with PCA...===============")
     embeddings_source = embeds_dir
-    reduced_embeds_dir = f"reduced_embeds_{from_fraction}"
+    reduced_embeds_dir = f"/ssd/temp/reduced_embeds_{from_fraction}_{split_name}"
 
     preprocess_embeds = True
     if os.path.exists(reduced_embeds_dir):
@@ -133,7 +153,7 @@ if __name__ == "__main__":
         # copy_names = random.sample(list(set([x[:-4] for x in os.listdir(embeddings_source)])), small_amount)
         # copy_names = set(copy_names)
 
-        temp_folder = f"temp_folder_{from_fraction}"
+        temp_folder = f"temp_folder_{from_fraction}_{split_name}"
         force_mkdir(temp_folder)
 
         # for file in tqdm(os.listdir(embeddings_source)):
@@ -187,8 +207,8 @@ if __name__ == "__main__":
 
     print("\n===============Selecting samples===============")
     target_num = len(filelist) * (to_fraction - from_fraction)
-    first_list_path = f"first_list_{from_fraction}.pickle"
-    second_list_path = f"second_list_{from_fraction}.pickle"
+    first_list_path = f"first_list_{from_fraction}_{split_name}.pickle"
+    second_list_path = f"second_list_{from_fraction}_{split_name}.pickle"
 
     print("Creating filelists for embeds selector...")
     if all([os.path.exists(item) for item in [first_list_path, second_list_path]]):
@@ -200,14 +220,16 @@ if __name__ == "__main__":
         second_list = []
         basenames = [x[:-4] for x in from_names]
         for file in tqdm(glob.glob(f"{reduced_embeds_dir}/**/*npy", recursive=True)):
-            if os.path.basename(file).split("_")[0] in basenames:
+            file_base_name = os.path.basename(file)
+            img_name = file_base_name[: file_base_name.index("_cropped")]
+            if img_name in basenames:
                 first_list.append(file)
             else:
                 second_list.append(file)
 
         pickle_save(first_list_path, first_list)
         pickle_save(second_list_path, second_list)
-    selected_path = f"selected_embeds_{from_fraction}.pickle"
+    selected_path = f"selected_embeds_{from_fraction}_{split_name}.pickle"
     if os.path.exists(selected_path):
         selected = pickle_load(selected_path)
         print("Skipping, selected embeds already exist...")
@@ -224,9 +246,7 @@ if __name__ == "__main__":
 
     free_bgs = []
     for file in tqdm(
-        glob.glob(
-            f"/home/setupishe/datasets/{dataset_name}/labels/train/*txt", recursive=True
-        )
+        glob.glob(f"/ssd/temp/{dataset_name}/labels/train/*txt", recursive=True)
     ):
         name = os.path.basename(file)
         if not os.path.getsize(file) and name not in from_names:
@@ -236,19 +256,15 @@ if __name__ == "__main__":
         os.path.basename(x).replace("txt", "jpg")
         for x in random.sample(free_bgs, int(target_num * bg2all_ratio))
     ]
-    res_path = (
-        f"/home/setupishe/datasets/{dataset_name}/train_{to_fraction}_{split_name}.txt"
-    )
+    res_path = f"/ssd/temp/{dataset_name}/train_{to_fraction}_{split_name}.txt"
 
     with open(res_path, "w") as f:
         f.writelines([f"./images/train/{x}\n" for x in from_names + not_bgs + bgs])
 
     print(f"`{res_path}` saved successfully.")
 
-    yaml_path = f"/home/setupishe/ultralytics/ultralytics/cfg/datasets/{dataset_name}_{to_fraction}_{split_name}.yaml"
-    with open(
-        f"/home/setupishe/ultralytics/ultralytics/cfg/datasets/{dataset_name}.yaml", "r"
-    ) as from_file:
+    yaml_path = f"{dataset_name}_{to_fraction}_{split_name}.yaml"
+    with open(f"{dataset_name}.yaml", "r") as from_file:
         lines = from_file.readlines()
 
     for i, line in enumerate(lines):
@@ -272,7 +288,7 @@ if __name__ == "__main__":
         shutil.rmtree(embeds_dir)
         shutil.rmtree(reduced_embeds_dir)
 
-        for file in glob.glob("/home/setupishe/bel_conf/*joblib"):
+        for file in glob.glob("/ssd/temp/*joblib"):
             os.remove(file)
 
         os.remove(first_list_path)
