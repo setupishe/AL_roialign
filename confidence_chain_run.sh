@@ -1,16 +1,21 @@
 #!/bin/bash
 
 # Define the range values
-ranges=(0.2 0.3 0.4 0.5 0.6)
+ranges=(0.3 0.4 0.5 0.6)
 
 # Loop through each range value
 for range in "${ranges[@]}"; do
   # Calculate the next range value using bc for floating-point arithmetic
   next_range=$(echo "$range + 0.1" | bc)
 
-  folder_name="distance"
+  folder_name="confidences"
   if [[ "$range" == "0.2" ]]; then
     folder_name="random"
+  fi
+
+  fromsplit_name="_confidences"
+  if [[ "$range" == "0.2" ]]; then
+    fromsplit_name=""
   fi
 
   # Output preparation message
@@ -21,7 +26,7 @@ for range in "${ranges[@]}"; do
     --weights /home/setupishe/ultralytics/runs/detect/VOC_${folder_name}_$range/weights/best.pt \
     --from-fraction $range \
     --to-fraction 0$next_range \
-    --from-split train_$range.txt \
+    --from-split train_${range}${fromsplit_name}.txt \
     --dataset-name VOC \
     --default-split train.txt \
     --split-name confidences \

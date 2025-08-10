@@ -17,8 +17,7 @@ for range in "${ranges[@]}"; do
   echo "PREPARING ON FRACTION $range FOR FRACTION 0$next_range"
   
   # Run the preparation script with the calculated arguments
-  python3 prepare_al_split.py \
-    --weights /home/setupishe/ultralytics/runs/detect/VOC_${folder_name}_$range/weights/best.pt \
+  python3 prepare_al_split.py --weights /home/setupishe/ultralytics/runs/detect/VOC_${folder_name}_$range/weights/best.pt \
     --from-fraction $range \
     --to-fraction 0$next_range \
     --from-split train_$range.txt \
@@ -26,7 +25,8 @@ for range in "${ranges[@]}"; do
     --split-name distance \
     --mode distance \
     --bg2all-ratio 0 \
-    --cleanup
+    --cleanup \
+    --seg2line
   
   # Output training message
   echo "TRAINING ON FRACTION 0$next_range"
@@ -39,3 +39,5 @@ for range in "${ranges[@]}"; do
   name=VOC_distance_0$next_range \
   epochs=65
 done
+
+  python3 prepare_al_split.py --weights /home/setupishe/ultralytics/runs/detect/VOC_random_0.7/weights/best.pt --from-fraction 0.7 --to-fraction 0.8 --from-split train_0.7.txt --dataset-name VOC --split-name distance --mode distance --bg2all-ratio 0 --cleanup
