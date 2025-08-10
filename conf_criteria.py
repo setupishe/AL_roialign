@@ -32,7 +32,7 @@ seg2line = args.seg2line
 # from_fraction = 0.6
 # to_fraction = 0.7
 # dataset_name = "coco"
-# from_split = "train2017_0.6_confidences.txt"
+# from_split = "train_0.6_confidences.txt"
 # split_name = "confidences"
 
 # iou_threshold = 0.7  # ultralytics default
@@ -304,10 +304,10 @@ with open(os.path.join(yaml_folder, original_yaml), "r") as from_file:
     lines = from_file.readlines()
 
 for i, line in enumerate(lines):
-    if "train: train2017.txt" in line:
+    if "train: train.txt" in line:
         lines[i] = (
             lines[i]
-            .replace("train2017.txt", os.path.basename(to_split))
+            .replace("train.txt", os.path.basename(to_split))
             .replace("118287", str(len(final_list)))
         )
 with open(
