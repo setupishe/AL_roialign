@@ -2,7 +2,7 @@
 
 # Define the range values
 ranges=(0.2 0.3 0.4 0.5 0.6)
-device=3
+device=0
 
 # Loop through each range value
 for range in "${ranges[@]}"; do

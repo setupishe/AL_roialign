@@ -1,0 +1,19 @@
+{
+  "mode": "distance",
+  "dataset_name": "VOC",
+  "device": 0,
+  "ranges": [0.2, 0.3, 0.4, 0.5, 0.6],
+  "bg2all_ratio": 0,
+  "prepare_script": "prepare_al_split.py",
+  "weights_base_path": "src/ultralytics/runs/detect",
+  "yolo_args": {
+    "mode": "train",
+    "model": "yolov8m.pt",
+    "pretrained": "False",
+    "data": "${DATASET_NAME}_0${next_range}_${MODE}.yaml",
+    "batch": "48",
+    "name": "${DATASET_NAME}_${MODE}_0${next_range}",
+    "device": "${DEVICE}",
+    "epochs": "65"
+  }
+} 

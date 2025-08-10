@@ -2,7 +2,7 @@
 
 # Define the range values
 ranges=(0.2 0.3 0.4 0.5 0.6)
-device=2
+device=0
 # Loop through each range value
 for range in "${ranges[@]}"; do
   # Calculate the next range value using bc for floating-point arithmetic
