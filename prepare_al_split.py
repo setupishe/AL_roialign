@@ -37,15 +37,16 @@ if __name__ == "__main__":
     with open(conf_path, "r") as f:
         conf = float(f.readline())
 
-    txt_path = f"/ssd/temp/{dataset_name}/{from_split}"
+    txt_path = f"/home/setupishe/datasets/{dataset_name}/{from_split}"
 
     import time
 
     def check_busy():
-        while len((embeds_names := glob.glob("/ssd/temp/*embeds*"))) > 0:
+        while len((embeds_names := glob.glob("/home/setupishe/datasets/*embeds*"))) > 0:
             if any([split_name in x for x in embeds_names]):
                 break
             else:
+                print(embeds_names)
                 print("waiting 1 more minute, someone else is active learning too...")
                 time.sleep(60)
 
@@ -58,7 +59,7 @@ if __name__ == "__main__":
         "\n===============Populating image dir with corresponding formatted anno files...==============="
     )
 
-    original_dataset = f"/ssd/temp/{dataset_name}/images/train/"
+    original_dataset = f"/home/setupishe/datasets/{dataset_name}/images/train/"
     if len(filelist := glob.glob(f"{original_dataset}*jpg")) == len(
         glob.glob(f"{original_dataset}*txt")
     ):
@@ -82,7 +83,7 @@ if __name__ == "__main__":
 
     print("\n===============Infering model on all available data...===============")
 
-    embeds_dir = f"/ssd/temp/embeds_{from_fraction}_{split_name}"
+    embeds_dir = f"/home/setupishe/datasets/embeds_{from_fraction}_{split_name}"
     print("Estimating total embeds amount...")
     total_embeds_count = 0
     for file in tqdm(glob.glob(f"{original_dataset}*txt")):
@@ -130,7 +131,7 @@ if __name__ == "__main__":
 
     print("\n===============Preprocessing embeds with PCA...===============")
     embeddings_source = embeds_dir
-    reduced_embeds_dir = f"/ssd/temp/reduced_embeds_{from_fraction}_{split_name}"
+    reduced_embeds_dir = f"/home/setupishe/datasets/reduced_embeds_{from_fraction}_{split_name}"
 
     preprocess_embeds = True
     if os.path.exists(reduced_embeds_dir):
@@ -246,7 +247,7 @@ if __name__ == "__main__":
 
     free_bgs = []
     for file in tqdm(
-        glob.glob(f"/ssd/temp/{dataset_name}/labels/train/*txt", recursive=True)
+        glob.glob(f"/home/setupishe/datasets/{dataset_name}/labels/train/*txt", recursive=True)
     ):
         name = os.path.basename(file)
         if not os.path.getsize(file) and name not in from_names:
@@ -256,15 +257,15 @@ if __name__ == "__main__":
         os.path.basename(x).replace("txt", "jpg")
         for x in random.sample(free_bgs, int(target_num * bg2all_ratio))
     ]
-    res_path = f"/ssd/temp/{dataset_name}/train_{to_fraction}_{split_name}.txt"
+    res_path = f"/home/setupishe/datasets/{dataset_name}/train_{to_fraction}_{split_name}.txt"
 
     with open(res_path, "w") as f:
         f.writelines([f"./images/train/{x}\n" for x in from_names + not_bgs + bgs])
 
     print(f"`{res_path}` saved successfully.")
 
-    yaml_path = f"{dataset_name}_{to_fraction}_{split_name}.yaml"
-    with open(f"{dataset_name}.yaml", "r") as from_file:
+    yaml_path = f"/home/setupishe/ultralytics/ultralytics/cfg/datasets/{dataset_name}_{to_fraction}_{split_name}.yaml"
+    with open(f"/home/setupishe/ultralytics/ultralytics/cfg/datasets/{dataset_name}.yaml", "r") as from_file:
         lines = from_file.readlines()
 
     for i, line in enumerate(lines):
@@ -288,7 +289,7 @@ if __name__ == "__main__":
         shutil.rmtree(embeds_dir)
         shutil.rmtree(reduced_embeds_dir)
 
-        for file in glob.glob("/ssd/temp/*joblib"):
+        for file in glob.glob("/home/setupishe/datasets/*joblib"):
             os.remove(file)
 
         os.remove(first_list_path)
