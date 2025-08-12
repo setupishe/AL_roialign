@@ -38,11 +38,8 @@ for range in "${ranges[@]}"; do
     --mode density \
     --bg2all-ratio 0 \
     --device $device \
-    --cleanup
-
-    --bg2all-ratio 0.008 \
     --cleanup \
-    --seg2line
+    --seg2line \
   
   # Output training message
   echo "TRAINING ON FRACTION 0$next_range"
