@@ -18,6 +18,12 @@ if __name__ == "__main__":
     parser.add_argument("--mode", default="distance")
     parser.add_argument("--cleanup", action="store_true")  # on/off flag
     parser.add_argument("--seg2line", action="store_true")  # on/off flag
+    parser.add_argument("--skip-pca", action="store_true")  # on/off flag
+    parser.add_argument("--netron-layer-names")
+    parser.add_argument(
+        "--index-backend", default="annoy", choices=["annoy", "hnsw"]
+    )  # new flag
+    parser.add_argument("--coarse-to-fine", action="store_true")  # new flag
 
     args = parser.parse_args()
 
@@ -32,6 +38,9 @@ if __name__ == "__main__":
     split_name = args.split_name
     cleanup = args.cleanup
     seg2line = args.seg2line
+    skip_pca = args.skip_pca
+    index_backend = args.index_backend
+    coarse_to_fine = args.coarse_to_fine
 
     conf_path = "/".join(weights.split("/")[:-2]) + "/best_conf.txt"
     with open(conf_path, "r") as f:
@@ -103,12 +112,22 @@ if __name__ == "__main__":
     if compute_embeds:
         output_alias_names = {}
 
-        # ========================================
-        netron_layer_names = [
-            "/model.22/Concat",  # (1, 66, 48, 80)
-            "/model.22/Concat_1",  # (1, 66, 24, 40)
-            "/model.22/Concat_2",  # (1, 66, 12, 20)
+        default_netron_layer_names = [
+            "/model.22/Concat",
+            "/model.22/Concat_1",
+            "/model.22/Concat_2",
         ]
+        # ========================================
+        netron_layer_names = (
+            args.netron_layer_names.split()
+            if "netron_layer_names" in args
+            else default_netron_layer_names
+        )
+        strategy = (
+            "default"
+            if args.netron_layer_names == default_netron_layer_names
+            else "iter"
+        )
         provider = [
             (
                 "CUDAExecutionProvider",
@@ -116,7 +135,11 @@ if __name__ == "__main__":
             )
         ]
         yep = YoloEmbeddingsProducer(
-            onnx_path, netron_layer_names, output_alias_names, providers=provider
+            onnx_path,
+            netron_layer_names,
+            output_alias_names,
+            providers=provider,
+            strategy=strategy,
         )
         yep.produce_embeddings_for_dir(
             dir_path=original_dataset,
@@ -131,7 +154,9 @@ if __name__ == "__main__":
 
     print("\n===============Preprocessing embeds with PCA...===============")
     embeddings_source = embeds_dir
-    reduced_embeds_dir = f"/home/setupishe/datasets/reduced_embeds_{from_fraction}_{split_name}"
+    reduced_embeds_dir = (
+        f"/home/setupishe/datasets/reduced_embeds_{from_fraction}_{split_name}"
+    )
 
     preprocess_embeds = True
     if os.path.exists(reduced_embeds_dir):
@@ -145,61 +170,49 @@ if __name__ == "__main__":
             shutil.rmtree(reduced_embeds_dir)
 
     if preprocess_embeds:
+        if skip_pca:
+            print("Skipping PCA, running normalization only...")
+            epp = EmbeddingPoolPreprocessor(
+                embeddings_source,
+                reduced_embeds_dir,
+                batch_size=512,
+            )
+            epp.run_l2_normalization()
+        else:
+            print("Creating subset folder for PCA training...")
+            temp_folder = f"temp_folder_{from_fraction}_{split_name}"
+            force_mkdir(temp_folder)
+            embeds_list = glob.glob(f"{embeddings_source}/*npy")
+            for i, file in tqdm(enumerate(embeds_list)):
+                if i % 5 == 0:
+                    base = file[:-4]
+                    for ext in [".npy", ".jpg", ".txt"]:
+                        if os.path.exists(file[:-4] + ext):
+                            shutil.copy(
+                                file[:-4] + ext,
+                                os.path.join(temp_folder, os.path.basename(file))[:-4]
+                                + ext,
+                            )
 
-        print("Creating subset folder...")
+            print("Training PCA on a subset...")
+            epp = EmbeddingPoolPreprocessor(
+                temp_folder,
+                reduced_embeds_dir,
+                target_length=512,
+                batch_size=512,
+            )
+            epp.run_dimension_reduction(mode="PCA")
 
-        # copy small_amount of total files
+            print("Applying trained PCA to all embeddings...")
+            epp = EmbeddingPoolPreprocessor(
+                embeddings_source,
+                reduced_embeds_dir,
+                target_length=512,
+                batch_size=512,
+            )
+            epp.run_dimension_reduction(mode="PCA")
 
-        # small_amount = len(os.listdir(embeddings_source)) // 5
-        # copy_names = random.sample(list(set([x[:-4] for x in os.listdir(embeddings_source)])), small_amount)
-        # copy_names = set(copy_names)
-
-        temp_folder = f"temp_folder_{from_fraction}_{split_name}"
-        force_mkdir(temp_folder)
-
-        # for file in tqdm(os.listdir(embeddings_source)):
-        #     if file[:-4] in copy_names:
-        #         shutil.copy(
-        #             os.path.join(embeddings_source, file),
-        #             os.path.join(temp_folder, file)
-        #         )
-        embeds_list = glob.glob(f"{embeddings_source}/*npy")
-        for i, file in tqdm(enumerate(embeds_list)):
-            if i % 5 == 0:
-                base = file[:-4]
-                for ext in [".npy", ".jpg", ".txt"]:
-                    shutil.copy(
-                        file[:-4] + ext,
-                        os.path.join(temp_folder, os.path.basename(file))[:-4] + ext,
-                    )
-        # launch with same to_folder and small_amount from_folder
-        print("Training PCA on a subset...")
-        epp = EmbeddingPoolPreprocessor(
-            temp_folder,
-            reduced_embeds_dir,
-            target_length=512,
-            batch_size=512,
-        )
-        epp.run_dimension_reduction(mode="PCA")
-        epp.synchronize_input_output_file_structure(
-            embeddings_source, reduced_embeds_dir
-        )
-
-        # remove to_folder and small_amount folder
-        shutil.rmtree(reduced_embeds_dir)
-        shutil.rmtree(temp_folder)
-
-        # and launch again with correct args
-        epp = EmbeddingPoolPreprocessor(
-            embeddings_source,
-            reduced_embeds_dir,
-            target_length=512,
-            batch_size=512,
-        )
-        epp.run_dimension_reduction(mode="PCA")
-        epp.synchronize_input_output_file_structure(
-            embeddings_source, reduced_embeds_dir
-        )
+            shutil.rmtree(temp_folder)
 
     # #removing whole img embeds, leaving only bboxes embeds
     # for file in glob.glob(f"{reduced_embeds_dir}/**/*npy, recursive=True"):
@@ -236,7 +249,12 @@ if __name__ == "__main__":
         print("Skipping, selected embeds already exist...")
     else:
         selected = select_embeddings(
-            first_list, second_list, k=target_num * (1 - bg2all_ratio), mode=mode
+            first_list,
+            second_list,
+            k=target_num * (1 - bg2all_ratio),
+            mode=mode,
+            backend=index_backend,
+            coarse_to_fine=coarse_to_fine,
         )
         pickle_save(selected_path, selected)
 
@@ -247,7 +265,9 @@ if __name__ == "__main__":
 
     free_bgs = []
     for file in tqdm(
-        glob.glob(f"/home/setupishe/datasets/{dataset_name}/labels/train/*txt", recursive=True)
+        glob.glob(
+            f"/home/setupishe/datasets/{dataset_name}/labels/train/*txt", recursive=True
+        )
     ):
         name = os.path.basename(file)
         if not os.path.getsize(file) and name not in from_names:
@@ -257,7 +277,9 @@ if __name__ == "__main__":
         os.path.basename(x).replace("txt", "jpg")
         for x in random.sample(free_bgs, int(target_num * bg2all_ratio))
     ]
-    res_path = f"/home/setupishe/datasets/{dataset_name}/train_{to_fraction}_{split_name}.txt"
+    res_path = (
+        f"/home/setupishe/datasets/{dataset_name}/train_{to_fraction}_{split_name}.txt"
+    )
 
     with open(res_path, "w") as f:
         f.writelines([f"./images/train/{x}\n" for x in from_names + not_bgs + bgs])
@@ -265,7 +287,9 @@ if __name__ == "__main__":
     print(f"`{res_path}` saved successfully.")
 
     yaml_path = f"/home/setupishe/ultralytics/ultralytics/cfg/datasets/{dataset_name}_{to_fraction}_{split_name}.yaml"
-    with open(f"/home/setupishe/ultralytics/ultralytics/cfg/datasets/{dataset_name}.yaml", "r") as from_file:
+    with open(
+        f"/home/setupishe/ultralytics/ultralytics/cfg/datasets/{dataset_name}.yaml", "r"
+    ) as from_file:
         lines = from_file.readlines()
 
     for i, line in enumerate(lines):

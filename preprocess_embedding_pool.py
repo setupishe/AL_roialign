@@ -13,7 +13,6 @@ import umap
 import argparse
 
 
-
 class VectorDataset(Dataset):
 
     def __init__(self, data_source: Union[str, Path, List[Union[str, Path]]]):
@@ -102,6 +101,54 @@ class EmbeddingPoolPreprocessor:
             raise NotImplementedError(
                 f"given dimension reduction method: ({mode}) is not implemented"
             )
+
+    def run_l2_normalization(self) -> None:
+        print(
+            stylish_text(
+                "Running L2 normalization only, skipping PCA", TextStyles.OKBLUE
+            )
+        )
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        for batch_data, batch_indices in tqdm(
+            self.dataloader, desc="L2 normalizing embeddings"
+        ):
+            # L2 normalize each vector in batch
+            norms = torch.norm(batch_data, p=2, dim=1, keepdim=True)
+            normalized_batch = batch_data / (norms + 1e-5)
+
+            for vector_idx, normalised_embedding in zip(
+                batch_indices, normalized_batch
+            ):
+                # Use idx to access the global index in the dataset
+                orig_file_path = self.dataloader.dataset.file_names[vector_idx]
+                orig_file_name = Path(orig_file_path).name
+                save_path = self.output_dir / orig_file_name
+                np.save(save_path, normalised_embedding[np.newaxis, ...])
+
+    def run_standardization(self) -> None:
+        print(
+            stylish_text(
+                "Running standardization only, skipping PCA", TextStyles.OKBLUE
+            )
+        )
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        for batch_data, batch_indices in tqdm(
+            self.dataloader, desc="Standardizing embeddings"
+        ):
+            mean = torch.mean(batch_data, 0)
+            std = torch.std(batch_data, 0)
+            normalized_batch = (batch_data - mean) / (std + 1e-5)
+
+            for vector_idx, normalised_embedding in zip(
+                batch_indices, normalized_batch
+            ):
+                # Use idx to access the global index in the dataset
+                orig_file_path = self.dataloader.dataset.file_names[vector_idx]
+                orig_file_name = Path(orig_file_path).name
+                save_path = self.output_dir / orig_file_name
+                np.save(save_path, normalised_embedding[np.newaxis, ...])
 
     def __run_pca_dimension_reduction(self) -> None:
         print(

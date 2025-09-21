@@ -10,7 +10,7 @@
   "weights_base_path": "/home/setupishe/ultralytics/runs/detect",
   "yolo_args": {
     "mode": "train",
-    "model": "yolov8m.pt",
+    "model": "yolov8s.pt",
     "pretrained": "False",
     "data": "${DATASET_NAME}_${next_range}_${MODE}.yaml",
     "batch": "48",

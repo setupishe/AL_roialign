@@ -1,12 +1,12 @@
 """
 Idea is to take feature maps from all backbone heads of YOLOv8 and try to locate what features
 are corresponding to specific detection regions. Ofc we need to be sure that we are taking output of
-hidden layers where spatial structure of output and input image are still align, i.e. leftmost element 
+hidden layers where spatial structure of output and input image are still align, i.e. leftmost element
 of feature map still corresponds to leftmost region of original image.
 ---------
 Another workaround would be to make a script that runs two (or more) times:
 one on full image and another one on image where only detected human is not blanked (or maybe a bit widened bbox)
-and then try to see what activations change their output a lot and what are not: this is for the case if 
+and then try to see what activations change their output a lot and what are not: this is for the case if
 spatial alignment of features and input image is broken
 """
 
@@ -39,7 +39,6 @@ class YoloEmbeddingsProducer:
     # median bbox height in validation set is 0.23268499999999998 (relative units), median bbox width is 0.07114600000000004
     # if we take some layer with high enough resolution like /model.4/cv1/act/Mul which shape is 1, 192, 48, 80 where 48 (h) x 80 (w) is res
     # we get that corresponding res of median bbox will be 11.168879999999998 (h) x 5.691680000000003 (w)
-    EMBEDDING_TENSORS_HW_RESOLUTION_BEFORE_FLATTENING = (12, 6)
     NETWORK_HEAD_OUTPUT_NAME = "output0"  # main YoloV8 output layer name
 
     def __init__(
@@ -50,9 +49,11 @@ class YoloEmbeddingsProducer:
         providers: List[str] = ["CUDAExecutionProvider"],
         imgsz: Optional[Sequence[int]] = None,
         save_crops=True,
+        strategy: str = "default",
     ) -> None:
         self.save_crops = save_crops
         self.onnx_model_path = onnx_model_path
+        self.strategy = strategy
         self.netron_layer_names = (
             netron_layer_names
             if netron_layer_names is not None
@@ -64,7 +65,9 @@ class YoloEmbeddingsProducer:
             ]
         )
         self.providers = providers
-
+        self.EMBEDDING_TENSORS_HW_RESOLUTION_BEFORE_FLATTENING = (
+            (12, 6) if strategy == "default" else (3, 3)
+        )
         self.model = onnx.load(onnx_model_path)
         self.session = ort.InferenceSession(
             self.model.SerializeToString(), providers=self.providers
@@ -198,9 +201,7 @@ class YoloEmbeddingsProducer:
             feature_vectors = []
             bbox = annotation.bbox
 
-            output_size = (
-                YoloEmbeddingsProducer.EMBEDDING_TENSORS_HW_RESOLUTION_BEFORE_FLATTENING
-            )
+            output_size = self.EMBEDDING_TENSORS_HW_RESOLUTION_BEFORE_FLATTENING
             for layer_name, output_array in image_inference_outputs.items():
                 if (
                     layer_name == YoloEmbeddingsProducer.NETWORK_HEAD_OUTPUT_NAME
@@ -220,9 +221,50 @@ class YoloEmbeddingsProducer:
                     aligned=True,
                 )
                 feature_vectors.append(feature_vector.to(torch.float32))
+            if self.strategy == "default":
+                flattened_tensors = [t.flatten(start_dim=1) for t in feature_vectors]
+                embedding_vector = torch.cat(flattened_tensors, dim=1).numpy()
+            else:
+                # Matryoshka embedding
+                sorted_feature_vectors = sorted(
+                    feature_vectors, key=lambda v: v.shape[1]
+                )
+                flattened_tensors = [
+                    t.flatten(start_dim=1) for t in sorted_feature_vectors
+                ]
+                v_low, v_mid, v_high = flattened_tensors
 
-            flattened_tensors = [t.flatten(start_dim=1) for t in feature_vectors]
-            embedding_vector = torch.cat(flattened_tensors, dim=1).numpy()
+                low_dim = (
+                    v_low.shape[1]
+                    / self.EMBEDDING_TENSORS_HW_RESOLUTION_BEFORE_FLATTENING[0]
+                )
+                mid_dim = (
+                    v_mid.shape[1]
+                    / self.EMBEDDING_TENSORS_HW_RESOLUTION_BEFORE_FLATTENING[0]
+                )
+                high_dim = (
+                    v_high.shape[1]
+                    / self.EMBEDDING_TENSORS_HW_RESOLUTION_BEFORE_FLATTENING[0]
+                )
+
+                if high_dim / low_dim + high_dim / mid_dim + 1 != 7:
+                    raise ValueError(
+                        f"High dim {high_dim} / low dim {low_dim} = {high_dim / low_dim} + high dim {high_dim} / mid dim {mid_dim} = {high_dim / mid_dim} + 1 != 7\n Try changing model size to s"
+                    )
+
+                # Matryoshka embedding: interleave 1 from v_low, 2 from v_mid, 4 from v_high
+                # Reshape to group elements: (1, features) -> (1, num_groups, group_size)
+                v_low_grouped = v_low.view(1, -1, 1)  # (1, 4608, 1)
+                v_mid_grouped = v_mid.view(1, -1, 2)  # (1, 4608, 2)
+                v_high_grouped = v_high.view(1, -1, 4)  # (1, 4608, 4)
+
+                # Concatenate along the last dimension to interleave
+                interleaved = torch.cat(
+                    [v_low_grouped, v_mid_grouped, v_high_grouped], dim=2
+                )  # (1, min_groups, 7)
+
+                # Flatten to get final embedding
+                embedding_vector = interleaved.view(1, -1).numpy()
             annotation_embeddings_pairs[annotation] = embedding_vector
 
         return annotation_embeddings_pairs

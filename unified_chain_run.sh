@@ -94,7 +94,8 @@ main() {
                 --split-name "$SPLIT_NAME" \
                 --mode "$MODE" \
                 --bg2all-ratio $BG2ALL_RATIO \
-                --device $DEVICE
+                --device $DEVICE \
+                --netron-layer-names "/model.15/cv2/act/Mul /model.18/cv2/act/Mul /model.21/cv2/act/Mul"
         fi
 
         echo "TRAINING ON FRACTION $next_range"
