@@ -50,6 +50,9 @@ class YoloEmbeddingsProducer:
         imgsz: Optional[Sequence[int]] = None,
         save_crops=True,
         strategy: str = "default",
+        embedding_tensors_hw_resolution_before_flattening: Optional[
+            Sequence[int]
+        ] = None,
     ) -> None:
         self.save_crops = save_crops
         self.onnx_model_path = onnx_model_path
@@ -65,9 +68,17 @@ class YoloEmbeddingsProducer:
             ]
         )
         self.providers = providers
-        self.EMBEDDING_TENSORS_HW_RESOLUTION_BEFORE_FLATTENING = (
-            (12, 6) if strategy == "default" else (3, 3)
-        )
+        if embedding_tensors_hw_resolution_before_flattening is None:
+            self.EMBEDDING_TENSORS_HW_RESOLUTION_BEFORE_FLATTENING = (
+                (12, 6) if strategy == "default" else (3, 3)
+            )
+        else:
+            if len(embedding_tensors_hw_resolution_before_flattening) != 2:
+                raise ValueError(
+                    "embedding_tensors_hw_resolution_before_flattening must be a 2-item (H, W) sequence"
+                )
+            h, w = embedding_tensors_hw_resolution_before_flattening
+            self.EMBEDDING_TENSORS_HW_RESOLUTION_BEFORE_FLATTENING = (int(h), int(w))
         self.model = onnx.load(onnx_model_path)
         self.session = ort.InferenceSession(
             self.model.SerializeToString(), providers=self.providers

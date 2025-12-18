@@ -21,6 +21,16 @@ if __name__ == "__main__":
     parser.add_argument("--skip-pca", action="store_true")  # on/off flag
     parser.add_argument("--netron-layer-names")
     parser.add_argument(
+        "--roi-hw",
+        "--embedding-hw",
+        dest="embedding_hw",
+        nargs=2,
+        type=int,
+        default=None,
+        metavar=("H", "W"),
+        help="Override ROI Align output resolution (H W) used before flattening embeddings. Default keeps current behavior.",
+    )
+    parser.add_argument(
         "--index-backend", default="annoy", choices=["annoy", "hnsw"]
     )  # new flag
     parser.add_argument("--coarse-to-fine", action="store_true")  # new flag
@@ -41,6 +51,7 @@ if __name__ == "__main__":
     skip_pca = args.skip_pca
     index_backend = args.index_backend
     coarse_to_fine = args.coarse_to_fine
+    embedding_hw = args.embedding_hw
 
     conf_path = "/".join(weights.split("/")[:-2]) + "/best_conf.txt"
     with open(conf_path, "r") as f:
@@ -140,6 +151,7 @@ if __name__ == "__main__":
             output_alias_names,
             providers=provider,
             strategy=strategy,
+            embedding_tensors_hw_resolution_before_flattening=embedding_hw,
         )
         yep.produce_embeddings_for_dir(
             dir_path=original_dataset,
