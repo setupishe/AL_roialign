@@ -276,7 +276,6 @@ class YoloEmbeddingsProducer:
                     blocks.append(block.flatten(start_dim=1))  # (1, C_block*H*W)
 
                 embedding_vector = torch.cat(blocks, dim=1).numpy()
-                print(f"[Matryoshka] Final embedding shape: {embedding_vector.shape}")
             annotation_embeddings_pairs[annotation] = embedding_vector
 
         return annotation_embeddings_pairs
