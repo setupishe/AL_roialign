@@ -242,9 +242,6 @@ class YoloEmbeddingsProducer:
                         f"High_c {high_c} / low_c {low_c} = {val1} + high_c {high_c} / mid_c {mid_c} = {val2} + 1 != 7\n Try changing model size to s"
                     )
 
-                print(
-                    "[Matryoshka] Interleaving: 1 from v_low, 2 from v_mid, 4 from v_high per group by reshaping and cat..."
-                )
                 # IMPORTANT: We want prefix slicing on the FINAL flattened vector to correspond to
                 # prefix slicing of channels from EACH map.
                 #
