@@ -229,42 +229,54 @@ class YoloEmbeddingsProducer:
                 sorted_feature_vectors = sorted(
                     feature_vectors, key=lambda v: v.shape[1]
                 )
-                flattened_tensors = [
-                    t.flatten(start_dim=1) for t in sorted_feature_vectors
-                ]
-                v_low, v_mid, v_high = flattened_tensors
+                t_low, t_mid, t_high = sorted_feature_vectors
 
-                low_dim = (
-                    v_low.shape[1]
-                    / self.EMBEDDING_TENSORS_HW_RESOLUTION_BEFORE_FLATTENING[0]
-                )
-                mid_dim = (
-                    v_mid.shape[1]
-                    / self.EMBEDDING_TENSORS_HW_RESOLUTION_BEFORE_FLATTENING[0]
-                )
-                high_dim = (
-                    v_high.shape[1]
-                    / self.EMBEDDING_TENSORS_HW_RESOLUTION_BEFORE_FLATTENING[0]
-                )
+                low_c = int(t_low.shape[1])
+                mid_c = int(t_mid.shape[1])
+                high_c = int(t_high.shape[1])
 
-                if high_dim / low_dim + high_dim / mid_dim + 1 != 7:
+                val1 = high_c / low_c if low_c else float("inf")
+                val2 = high_c / mid_c if mid_c else float("inf")
+                if val1 + val2 + 1 != 7:
                     raise ValueError(
-                        f"High dim {high_dim} / low dim {low_dim} = {high_dim / low_dim} + high dim {high_dim} / mid dim {mid_dim} = {high_dim / mid_dim} + 1 != 7\n Try changing model size to s"
+                        f"High_c {high_c} / low_c {low_c} = {val1} + high_c {high_c} / mid_c {mid_c} = {val2} + 1 != 7\n Try changing model size to s"
                     )
 
-                # Matryoshka embedding: interleave 1 from v_low, 2 from v_mid, 4 from v_high
-                # Reshape to group elements: (1, features) -> (1, num_groups, group_size)
-                v_low_grouped = v_low.view(1, -1, 1)  # (1, 4608, 1)
-                v_mid_grouped = v_mid.view(1, -1, 2)  # (1, 4608, 2)
-                v_high_grouped = v_high.view(1, -1, 4)  # (1, 4608, 4)
+                print(
+                    "[Matryoshka] Interleaving: 1 from v_low, 2 from v_mid, 4 from v_high per group by reshaping and cat..."
+                )
+                # IMPORTANT: We want prefix slicing on the FINAL flattened vector to correspond to
+                # prefix slicing of channels from EACH map.
+                #
+                # Build 8 equal blocks (1/8 each). Block i contains:
+                # - channels [i/8 .. (i+1)/8) from LOW map
+                # - channels [i/8 .. (i+1)/8) from MID map
+                # - channels [i/8 .. (i+1)/8) from HIGH map
+                #
+                # This way vec[:D/8] contains 1/8 of *each* map (exactly what al_utils does).
+                slices = 8
+                if (low_c % slices) or (mid_c % slices) or (high_c % slices):
+                    raise ValueError(
+                        f"Channel counts must be divisible by {slices} for blockwise prefix layout: "
+                        f"low={low_c}, mid={mid_c}, high={high_c}"
+                    )
+                low_step = low_c // slices
+                mid_step = mid_c // slices
+                high_step = high_c // slices
 
-                # Concatenate along the last dimension to interleave
-                interleaved = torch.cat(
-                    [v_low_grouped, v_mid_grouped, v_high_grouped], dim=2
-                )  # (1, min_groups, 7)
+                blocks = []
+                for i in range(slices):
+                    # Slice by CHANNELS on BCHW tensors, then flatten once per block.
+                    low_part = t_low[:, i * low_step : (i + 1) * low_step, :, :]
+                    mid_part = t_mid[:, i * mid_step : (i + 1) * mid_step, :, :]
+                    high_part = t_high[:, i * high_step : (i + 1) * high_step, :, :]
+                    block = torch.cat(
+                        [low_part, mid_part, high_part], dim=1
+                    )  # (1, C_block, H, W)
+                    blocks.append(block.flatten(start_dim=1))  # (1, C_block*H*W)
 
-                # Flatten to get final embedding
-                embedding_vector = interleaved.view(1, -1).numpy()
+                embedding_vector = torch.cat(blocks, dim=1).numpy()
+                print(f"[Matryoshka] Final embedding shape: {embedding_vector.shape}")
             annotation_embeddings_pairs[annotation] = embedding_vector
 
         return annotation_embeddings_pairs
