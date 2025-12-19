@@ -211,6 +211,8 @@ def select_embeddings(
     mode="distance",
     backend="annoy",
     coarse_to_fine=False,
+    coarse_k1_mult=4,
+    coarse_k2_mult=2,
     hnsw_batch_size=1024,
     exact_batch_size=2048,
 ):
@@ -294,8 +296,13 @@ def select_embeddings(
 
     # Coarse-to-fine pipeline
     print("Coarse-to-fine selection enabled")
-    k1 = min(len(second_list), max(1, k * 4))
-    k2 = min(len(second_list), max(1, k * 2))
+    coarse_k1_mult = float(coarse_k1_mult)
+    coarse_k2_mult = float(coarse_k2_mult)
+    if coarse_k1_mult < 1 or coarse_k2_mult < 1:
+        raise ValueError("coarse_k1_mult and coarse_k2_mult must be >= 1")
+
+    k1 = min(len(second_list), max(1, int(k * coarse_k1_mult)))
+    k2 = min(len(second_list), max(1, int(k * coarse_k2_mult)))
 
     # Stage 1: HNSW on 1/8 dims
     if not HAS_HNSWLIB:

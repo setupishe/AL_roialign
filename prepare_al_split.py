@@ -34,6 +34,18 @@ if __name__ == "__main__":
         "--index-backend", default="annoy", choices=["annoy", "hnsw"]
     )  # new flag
     parser.add_argument("--coarse-to-fine", action="store_true")  # new flag
+    parser.add_argument(
+        "--ctf-k1-mult",
+        type=float,
+        default=4.0,
+        help="Coarse-to-fine Stage-1 candidate multiplier. k1 = k * ctf_k1_mult (default: 4).",
+    )
+    parser.add_argument(
+        "--ctf-k2-mult",
+        type=float,
+        default=2.0,
+        help="Coarse-to-fine Stage-2 candidate multiplier. k2 = k * ctf_k2_mult (default: 2).",
+    )
 
     args = parser.parse_args()
 
@@ -51,6 +63,8 @@ if __name__ == "__main__":
     skip_pca = args.skip_pca
     index_backend = args.index_backend
     coarse_to_fine = args.coarse_to_fine
+    ctf_k1_mult = args.ctf_k1_mult
+    ctf_k2_mult = args.ctf_k2_mult
     embedding_hw = args.embedding_hw
 
     conf_path = "/".join(weights.split("/")[:-2]) + "/best_conf.txt"
@@ -267,6 +281,8 @@ if __name__ == "__main__":
             mode=mode,
             backend=index_backend,
             coarse_to_fine=coarse_to_fine,
+            coarse_k1_mult=ctf_k1_mult,
+            coarse_k2_mult=ctf_k2_mult,
         )
         pickle_save(selected_path, selected)
 
