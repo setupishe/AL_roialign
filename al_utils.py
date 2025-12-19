@@ -211,6 +211,8 @@ def select_embeddings(
     mode="distance",
     backend="annoy",
     coarse_to_fine=False,
+    hnsw_batch_size=1024,
+    exact_batch_size=2048,
 ):
     if mode not in ["distance", "density"]:
         raise ValueError("`mode` should be either in distance or density")
@@ -231,14 +233,20 @@ def select_embeddings(
     k = int(total_embeddings // n) if n is not None else int(k)
     reverse = mode == "distance"
 
-    def _score_files_hnsw(index, files, use_dim: int, nn_k: int):
+    def _score_files_hnsw(index, files, use_dim: int, nn_k: int, batch_size: int):
         scored = []
-        for file in tqdm(files):
-            emb = np.load(file).squeeze(0).astype(np.float32)
-            emb = _slice_vector(emb, use_dim)
-            _, distances = index.knn_query(emb.reshape(1, -1), k=nn_k)
-            score = _score_from_distances(distances[0].tolist(), mode)
-            scored.append((score, file))
+        batch_size = int(batch_size) if batch_size is not None else 1024
+        batch_size = max(1, batch_size)
+        for start in tqdm(range(0, len(files), batch_size)):
+            batch_files = files[start : start + batch_size]
+            batch = np.empty((len(batch_files), int(use_dim)), dtype=np.float32)
+            for i, file in enumerate(batch_files):
+                emb = np.load(file).squeeze(0).astype(np.float32)
+                batch[i] = _slice_vector(emb, use_dim)
+            _, distances = index.knn_query(batch, k=nn_k)
+            for i, file in enumerate(batch_files):
+                score = _score_from_distances(distances[i].tolist(), mode)
+                scored.append((score, file))
         return scored
 
     if not coarse_to_fine:
@@ -270,7 +278,7 @@ def select_embeddings(
                 embeds_with_scores.append((score, file))
         else:
             embeds_with_scores = _score_files_hnsw(
-                index, second_list, embedding_dim, nn_k
+                index, second_list, embedding_dim, nn_k, hnsw_batch_size
             )
         sorted_embeds = sorted(embeds_with_scores, key=lambda x: x[0], reverse=reverse)
         # Deduplicate by image and collect final list of image names
@@ -296,7 +304,7 @@ def select_embeddings(
     print(f"[Stage 1] Building HNSW index on {d1}/{embedding_dim} dims...")
     index1 = build_hnsw_index(first_list, embedding_dim, use_dim=d1)
     print("[Stage 1] Ranking candidates...")
-    scores1 = _score_files_hnsw(index1, second_list, d1, nn_k)
+    scores1 = _score_files_hnsw(index1, second_list, d1, nn_k, hnsw_batch_size)
     stage1_sorted = sorted(scores1, key=lambda x: x[0], reverse=reverse)
     candidates_stage1 = _collect_top_by_image(stage1_sorted, k1)
 
@@ -305,7 +313,7 @@ def select_embeddings(
     print(f"[Stage 2] Building HNSW index on {d2}/{embedding_dim} dims...")
     index2 = build_hnsw_index(first_list, embedding_dim, use_dim=d2)
     print("[Stage 2] Re-ranking candidates...")
-    scores2 = _score_files_hnsw(index2, candidates_stage1, d2, nn_k)
+    scores2 = _score_files_hnsw(index2, candidates_stage1, d2, nn_k, hnsw_batch_size)
     stage2_sorted = sorted(scores2, key=lambda x: x[0], reverse=reverse)
     candidates_stage2 = _collect_top_by_image(stage2_sorted, k2)
 
@@ -313,13 +321,26 @@ def select_embeddings(
     print(
         f"[Stage 3] Exact re-ranking on full vectors (dim = {embedding_dim}) (cosine distance)..."
     )
+    from sklearn.neighbors import NearestNeighbors
+
     first_matrix = _load_matrix(first_list, use_dim=None, normalize=True)
+    nn_exact = NearestNeighbors(
+        n_neighbors=int(nn_k), metric="cosine", algorithm="brute", n_jobs=-1
+    )
+    nn_exact.fit(first_matrix)
+
     scores3 = []
-    for file in tqdm(candidates_stage2):
-        emb = np.load(file).squeeze(0).astype(np.float32)
-        knn_dists = _exact_knn_distances_cosine(emb, first_matrix, nn_k)
-        score = _score_from_distances(knn_dists, mode)
-        scores3.append((score, file))
+    exact_batch_size = int(exact_batch_size) if exact_batch_size is not None else 2048
+    exact_batch_size = max(1, exact_batch_size)
+    for start in tqdm(range(0, len(candidates_stage2), exact_batch_size)):
+        batch_files = candidates_stage2[start : start + exact_batch_size]
+        batch = _load_matrix(batch_files, use_dim=None, normalize=True)
+        distances, _ = nn_exact.kneighbors(
+            batch, n_neighbors=int(nn_k), return_distance=True
+        )
+        for i, file in enumerate(batch_files):
+            score = _score_from_distances(distances[i].tolist(), mode)
+            scores3.append((score, file))
     stage3_sorted = sorted(scores3, key=lambda x: x[0], reverse=reverse)
 
     # Produce final list of image names
