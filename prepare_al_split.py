@@ -214,12 +214,30 @@ if __name__ == "__main__":
     if preprocess_embeds:
         if skip_pca:
             print("Skipping PCA, running normalization only...")
-            epp = EmbeddingPoolPreprocessor(
-                embeddings_source,
-                reduced_embeds_dir,
-                batch_size=512,
-            )
-            epp.run_l2_normalization()
+            if separate_maps_voting:
+                # Important: separate maps have different embedding lengths, so we must normalize
+                # each map independently (otherwise torch stack will fail in the DataLoader).
+                for mi in range(3):
+                    files = glob.glob(
+                        f"{embeddings_source}/**/*.m{mi}.npy", recursive=True
+                    )
+                    if len(files) == 0:
+                        raise RuntimeError(
+                            f"--separate-maps-voting enabled, but no .m{mi}.npy files found in {embeddings_source}"
+                        )
+                    epp = EmbeddingPoolPreprocessor(
+                        files,
+                        reduced_embeds_dir,
+                        batch_size=512,
+                    )
+                    epp.run_l2_normalization()
+            else:
+                epp = EmbeddingPoolPreprocessor(
+                    embeddings_source,
+                    reduced_embeds_dir,
+                    batch_size=512,
+                )
+                epp.run_l2_normalization()
         else:
             print("Creating subset folder for PCA training...")
             temp_folder = f"temp_folder_{from_fraction}_{split_name}"

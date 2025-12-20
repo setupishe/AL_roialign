@@ -30,22 +30,34 @@ class VectorDataset(Dataset):
     def _load_stored_embeddings(
         self,
     ) -> List[Path]:
+        """
+        Supported data_source formats:
+        - str/Path to a directory: loads all `*.npy` in that directory
+        - str/Path to a single `.npy` file: loads that file
+        - list of str/Path: can be a mix of directories and `.npy` files
+        """
         if type(self.data_source) in (str, Path):
-            embedding_files = [
-                file for file in Path(self.data_source).glob("*.npy") if file.is_file()
-            ]
-        elif type(self.data_source) == list:
+            p = Path(self.data_source)
+            if p.is_file():
+                return [p]
+            return [file for file in p.glob("*.npy") if file.is_file()]
+
+        if type(self.data_source) == list:
             assert all(type(item) in (str, Path) for item in self.data_source)
-            embedding_files = []
+            embedding_files: List[Path] = []
             for item in self.data_source:
-                embedding_files += [
-                    file for file in Path(item).glob("*.npy") if file.is_file()
-                ]
-        else:
-            raise ValueError(
-                "unexpected data source format. Should be either path to dir with embeddings or a list of such dirs"
-            )
-        return embedding_files
+                p = Path(item)
+                if p.is_file():
+                    embedding_files.append(p)
+                else:
+                    embedding_files += [
+                        file for file in p.glob("*.npy") if file.is_file()
+                    ]
+            return embedding_files
+
+        raise ValueError(
+            "unexpected data source format. Should be either path to dir with embeddings, a .npy file, or a list of those"
+        )
 
 
 def custom_collate_fn(batch):
