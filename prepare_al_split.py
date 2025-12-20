@@ -21,6 +21,11 @@ if __name__ == "__main__":
     parser.add_argument("--skip-pca", action="store_true")  # on/off flag
     parser.add_argument("--netron-layer-names")
     parser.add_argument(
+        "--separate-maps-voting",
+        action="store_true",
+        help="Store 3 feature-map embeddings separately and select per-map independently, then combine selected images by voting (1..3).",
+    )
+    parser.add_argument(
         "--roi-hw",
         "--embedding-hw",
         dest="embedding_hw",
@@ -66,6 +71,7 @@ if __name__ == "__main__":
     ctf_k1_mult = args.ctf_k1_mult
     ctf_k2_mult = args.ctf_k2_mult
     embedding_hw = args.embedding_hw
+    separate_maps_voting = args.separate_maps_voting
 
     conf_path = "/".join(weights.split("/")[:-2]) + "/best_conf.txt"
     with open(conf_path, "r") as f:
@@ -123,11 +129,14 @@ if __name__ == "__main__":
     for file in tqdm(glob.glob(f"{original_dataset}*txt")):
         with open(file, "r") as f:
             total_embeds_count += len(f.readlines())
+    expected_embeddings_files = (
+        total_embeds_count * 3 if separate_maps_voting else total_embeds_count
+    )
     compute_embeds = True
     if os.path.exists(embeds_dir):
         if (
             len(glob.glob(f"{embeds_dir}/**/*.npy", recursive=True))
-            == total_embeds_count
+            == expected_embeddings_files
         ):
             compute_embeds = False
             print("Skipping embeds computation since they already exist")
@@ -148,11 +157,18 @@ if __name__ == "__main__":
             if "netron_layer_names" in args
             else default_netron_layer_names
         )
-        strategy = (
-            "default"
-            if args.netron_layer_names == default_netron_layer_names
-            else "iter"
-        )
+        if separate_maps_voting and len(netron_layer_names) != 3:
+            raise ValueError(
+                f"--separate-maps-voting expects exactly 3 feature maps (got {len(netron_layer_names)}): {netron_layer_names}"
+            )
+        if separate_maps_voting:
+            strategy = "separate"
+        else:
+            strategy = (
+                "default"
+                if args.netron_layer_names == default_netron_layer_names
+                else "iter"
+            )
         provider = [
             (
                 "CUDAExecutionProvider",
@@ -188,7 +204,7 @@ if __name__ == "__main__":
     if os.path.exists(reduced_embeds_dir):
         if (
             len(glob.glob(f"{reduced_embeds_dir}/**/*.npy", recursive=True))
-            == total_embeds_count
+            == expected_embeddings_files
         ):
             preprocess_embeds = False
             print("Skipping embeds preprocessing since its already done")
@@ -247,43 +263,86 @@ if __name__ == "__main__":
 
     print("\n===============Selecting samples===============")
     target_num = len(filelist) * (to_fraction - from_fraction)
-    first_list_path = f"first_list_{from_fraction}_{split_name}.pickle"
-    second_list_path = f"second_list_{from_fraction}_{split_name}.pickle"
+    list_suffix = "_separate_vote" if separate_maps_voting else ""
+    first_list_path = f"first_list_{from_fraction}_{split_name}{list_suffix}.pickle"
+    second_list_path = f"second_list_{from_fraction}_{split_name}{list_suffix}.pickle"
 
     print("Creating filelists for embeds selector...")
     if all([os.path.exists(item) for item in [first_list_path, second_list_path]]):
-        first_list = pickle_load(first_list_path)
-        second_list = pickle_load(second_list_path)
+        filelists = pickle_load(first_list_path), pickle_load(second_list_path)
         print("Skipping, lists already exist...")
     else:
-        first_list = []
-        second_list = []
         basenames = [x[:-4] for x in from_names]
-        for file in tqdm(glob.glob(f"{reduced_embeds_dir}/**/*npy", recursive=True)):
-            file_base_name = os.path.basename(file)
-            img_name = file_base_name[: file_base_name.index("_cropped")]
-            if img_name in basenames:
-                first_list.append(file)
-            else:
-                second_list.append(file)
+        if separate_maps_voting:
+            first_lists = [[], [], []]
+            second_lists = [[], [], []]
+            for file in tqdm(
+                glob.glob(f"{reduced_embeds_dir}/**/*npy", recursive=True)
+            ):
+                base = os.path.basename(file)
+                # Expect naming from producer: xxx_cropped.m0.npy / .m1.npy / .m2.npy
+                if ".m0.npy" in base:
+                    mi = 0
+                elif ".m1.npy" in base:
+                    mi = 1
+                elif ".m2.npy" in base:
+                    mi = 2
+                else:
+                    continue
+                img_name = base[: base.index("_cropped")]
+                if img_name in basenames:
+                    first_lists[mi].append(file)
+                else:
+                    second_lists[mi].append(file)
+            pickle_save(first_list_path, first_lists)
+            pickle_save(second_list_path, second_lists)
+            filelists = (first_lists, second_lists)
+        else:
+            first_list = []
+            second_list = []
+            for file in tqdm(
+                glob.glob(f"{reduced_embeds_dir}/**/*npy", recursive=True)
+            ):
+                file_base_name = os.path.basename(file)
+                img_name = file_base_name[: file_base_name.index("_cropped")]
+                if img_name in basenames:
+                    first_list.append(file)
+                else:
+                    second_list.append(file)
+            pickle_save(first_list_path, first_list)
+            pickle_save(second_list_path, second_list)
+            filelists = (first_list, second_list)
 
-        pickle_save(first_list_path, first_list)
-        pickle_save(second_list_path, second_list)
-    selected_path = f"selected_embeds_{from_fraction}_{split_name}.pickle"
+    selected_path = f"selected_embeds_{from_fraction}_{split_name}{list_suffix}.pickle"
     if os.path.exists(selected_path):
         selected = pickle_load(selected_path)
         print("Skipping, selected embeds already exist...")
     else:
-        selected = select_embeddings(
-            first_list,
-            second_list,
-            k=target_num * (1 - bg2all_ratio),
-            mode=mode,
-            backend=index_backend,
-            coarse_to_fine=coarse_to_fine,
-            coarse_k1_mult=ctf_k1_mult,
-            coarse_k2_mult=ctf_k2_mult,
-        )
+        k_sel = int(target_num * (1 - bg2all_ratio))
+        if separate_maps_voting:
+            first_lists, second_lists = filelists
+            selected = select_embeddings_voting(
+                first_lists,
+                second_lists,
+                k=k_sel,
+                mode=mode,
+                backend=index_backend,
+                coarse_to_fine=coarse_to_fine,
+                coarse_k1_mult=ctf_k1_mult,
+                coarse_k2_mult=ctf_k2_mult,
+            )
+        else:
+            first_list, second_list = filelists
+            selected = select_embeddings(
+                first_list,
+                second_list,
+                k=k_sel,
+                mode=mode,
+                backend=index_backend,
+                coarse_to_fine=coarse_to_fine,
+                coarse_k1_mult=ctf_k1_mult,
+                coarse_k2_mult=ctf_k2_mult,
+            )
         pickle_save(selected_path, selected)
 
     print(

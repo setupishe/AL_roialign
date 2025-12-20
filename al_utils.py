@@ -283,16 +283,19 @@ def select_embeddings(
                 index, second_list, embedding_dim, nn_k, hnsw_batch_size
             )
         sorted_embeds = sorted(embeds_with_scores, key=lambda x: x[0], reverse=reverse)
-        # Deduplicate by image and collect final list of image names
-        res = set()
+        # Deduplicate by image and collect final list of image names (preserve ranked order)
+        res = []
+        seen = set()
         for score, f in sorted_embeds:
             name = os.path.basename(f)
             img_name = name[: name.index("_cropped")]
-            if len(res) < k:
-                res.add(img_name)
-            else:
+            if img_name in seen:
+                continue
+            seen.add(img_name)
+            res.append(img_name)
+            if len(res) >= k:
                 break
-        return list(res)
+        return res
 
     # Coarse-to-fine pipeline
     print("Coarse-to-fine selection enabled")
@@ -351,12 +354,81 @@ def select_embeddings(
     stage3_sorted = sorted(scores3, key=lambda x: x[0], reverse=reverse)
 
     # Produce final list of image names
-    res = set()
+    res = []
+    seen = set()
     for score, f in stage3_sorted:
         name = os.path.basename(f)
         img_name = name[: name.index("_cropped")]
-        if len(res) < k:
-            res.add(img_name)
-        else:
+        if img_name in seen:
+            continue
+        seen.add(img_name)
+        res.append(img_name)
+        if len(res) >= k:
             break
-    return list(res)
+    return res
+
+
+def select_embeddings_voting(
+    first_lists,
+    second_lists,
+    k,
+    mode="distance",
+    backend="annoy",
+    coarse_to_fine=False,
+    coarse_k1_mult=4,
+    coarse_k2_mult=2,
+    hnsw_batch_size=1024,
+    exact_batch_size=2048,
+):
+    """
+    Run selection separately for multiple embedding spaces (e.g. 3 feature maps),
+    then combine selected image lists by voting.
+
+    Vote for an image is how many per-space selections contain it (1..N).
+    Ties are broken by average rank (lower is better).
+    """
+    if not isinstance(first_lists, (list, tuple)) or not isinstance(
+        second_lists, (list, tuple)
+    ):
+        raise TypeError("first_lists and second_lists must be lists/tuples of lists")
+    if len(first_lists) != len(second_lists):
+        raise ValueError("first_lists and second_lists must have the same length")
+    if len(first_lists) == 0:
+        return []
+
+    per_space_selected = []
+    for fl, sl in zip(first_lists, second_lists):
+        per_space_selected.append(
+            select_embeddings(
+                fl,
+                sl,
+                k=k,
+                mode=mode,
+                backend=backend,
+                coarse_to_fine=coarse_to_fine,
+                coarse_k1_mult=coarse_k1_mult,
+                coarse_k2_mult=coarse_k2_mult,
+                hnsw_batch_size=hnsw_batch_size,
+                exact_batch_size=exact_batch_size,
+            )
+        )
+
+    # votes[img] = count of lists containing img
+    # ranks[img] = list of ranks (0-based) across spaces where present
+    votes = {}
+    ranks = {}
+    for sel in per_space_selected:
+        for r, img in enumerate(sel):
+            votes[img] = votes.get(img, 0) + 1
+            ranks.setdefault(img, []).append(r)
+
+    # Sort by:
+    # 1) vote desc (3->2->1)
+    # 2) average rank asc (better rank first)
+    # 3) name for determinism
+    def avg_rank(img):
+        rs = ranks.get(img, [])
+        return float(sum(rs) / max(1, len(rs)))
+
+    ordered = sorted(votes.keys(), key=lambda img: (-votes[img], avg_rank(img), img))
+    return ordered[: int(k)]

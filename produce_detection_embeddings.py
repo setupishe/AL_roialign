@@ -87,6 +87,12 @@ class YoloEmbeddingsProducer:
         self.session = ort.InferenceSession(
             self.model.SerializeToString(), providers=self.providers
         )  # reinitialize modified model
+        # Stable order of layer output tensor names corresponding to self.netron_layer_names.
+        # We need this because onnx session outputs are tensor names, and their order is not guaranteed
+        # to match `netron_layer_names` directly.
+        self._layer_output_tensor_names_in_order = (
+            self._get_layer_output_tensor_names_in_netron_order()
+        )
 
         self.output_alias_names = output_alias_names
         self.imgsz = imgsz if imgsz is not None else [640, 640]
@@ -160,7 +166,7 @@ class YoloEmbeddingsProducer:
         ] = None,  # optional. Get them from predictions otherwise
         conf_thres: float = 0.25,
         iou_thres: float = 0.7,
-    ) -> Dict[Annotation, np.ndarray]:
+    ) -> Dict[Annotation, Union[np.ndarray, List[np.ndarray]]]:
 
         # ==== get predicted bboxes, apply NMS and normalization if they came from predictions
         preprocessed_image, image_inference_outputs = self.get_image_inference_outputs(
@@ -209,15 +215,13 @@ class YoloEmbeddingsProducer:
         # ==== get feature vectors from each hidden layer of interest that correspond to found bboxes
         annotation_embeddings_pairs = {}
         for annotation in normalized_annotations:
+            # Collect per-layer ROI-aligned feature tensors in a stable order
             feature_vectors = []
             bbox = annotation.bbox
 
             output_size = self.EMBEDDING_TENSORS_HW_RESOLUTION_BEFORE_FLATTENING
-            for layer_name, output_array in image_inference_outputs.items():
-                if (
-                    layer_name == YoloEmbeddingsProducer.NETWORK_HEAD_OUTPUT_NAME
-                ):  # no interest in output from yolo head
-                    continue
+            for output_tensor_name in self._layer_output_tensor_names_in_order:
+                output_array = image_inference_outputs[output_tensor_name]
                 _, c, h, w = output_array.shape
                 feature_map_box = [
                     w * bbox.x_min,
@@ -235,6 +239,12 @@ class YoloEmbeddingsProducer:
             if self.strategy == "default":
                 flattened_tensors = [t.flatten(start_dim=1) for t in feature_vectors]
                 embedding_vector = torch.cat(flattened_tensors, dim=1).numpy()
+            elif self.strategy == "separate":
+                # Return 3 separate embeddings (one per feature map) instead of combining.
+                # Note: caller is expected to persist them separately.
+                embedding_vector = [
+                    t.flatten(start_dim=1).numpy() for t in feature_vectors
+                ]
             else:
                 # Matryoshka embedding
                 sorted_feature_vectors = sorted(
@@ -325,6 +335,21 @@ class YoloEmbeddingsProducer:
                 f"NN nodes were not found for some provided netron_layer_names: {not_found_names}."
             )
         return ret
+
+    def _get_layer_output_tensor_names_in_netron_order(self) -> List[str]:
+        """
+        @returns: list of output tensor names (strings) corresponding to nodes in `self.netron_layer_names`,
+                  in the same order as `self.netron_layer_names`.
+        """
+        node_names_to_nodes = self._map_netron_layer_names_to_nodes()
+        out_names = []
+        for node_name in self.netron_layer_names:
+            node = node_names_to_nodes[node_name]
+            if not node.output:
+                raise ValueError(f"Node '{node_name}' has no outputs")
+            # Most relevant nodes have a single output tensor
+            out_names.append(node.output[0])
+        return out_names
 
     def _get_outputs_from_layers_of_interest(
         self, input_array: np.ndarray
@@ -442,7 +467,14 @@ class YoloEmbeddingsProducer:
                 cropped_image_path = self._save_cropped_image(
                     image_path, bbox, embedding_and_crops_save_dir
                 )
-                np.save(cropped_image_path.with_suffix(".npy"), embedding)
+                if self.strategy == "separate":
+                    # Save 3 embeddings separately, one per feature map.
+                    # Naming convention preserves `_cropped` prefix so downstream parsing still works.
+                    # Example: xxx_cropped.m0.npy, xxx_cropped.m1.npy, xxx_cropped.m2.npy
+                    for i, emb in enumerate(embedding):
+                        np.save(cropped_image_path.with_suffix(f".m{i}.npy"), emb)
+                else:
+                    np.save(cropped_image_path.with_suffix(".npy"), embedding)
                 Path(cropped_image_path.with_suffix(".txt")).write_text(
                     annotation.to_yolo_annotation_line()
                 )
