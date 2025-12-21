@@ -213,6 +213,8 @@ def select_embeddings(
     coarse_to_fine=False,
     coarse_k1_mult=4,
     coarse_k2_mult=2,
+    coarse_d1_div=8,
+    coarse_d2_div=4,
     hnsw_batch_size=1024,
     exact_batch_size=2048,
 ):
@@ -303,14 +305,18 @@ def select_embeddings(
     coarse_k2_mult = float(coarse_k2_mult)
     if coarse_k1_mult < 1 or coarse_k2_mult < 1:
         raise ValueError("coarse_k1_mult and coarse_k2_mult must be >= 1")
+    coarse_d1_div = int(coarse_d1_div)
+    coarse_d2_div = int(coarse_d2_div)
+    if coarse_d1_div < 1 or coarse_d2_div < 1:
+        raise ValueError("coarse_d1_div and coarse_d2_div must be >= 1")
 
     k1 = min(len(second_list), max(1, int(k * coarse_k1_mult)))
     k2 = min(len(second_list), max(1, int(k * coarse_k2_mult)))
 
-    # Stage 1: HNSW on 1/8 dims
+    # Stage 1: HNSW on reduced dims
     if not HAS_HNSWLIB:
         raise ImportError("hnswlib not installed; required for coarse-to-fine mode.")
-    d1 = max(1, embedding_dim // 8)
+    d1 = max(1, embedding_dim // coarse_d1_div)
     print(f"[Stage 1] Building HNSW index on {d1}/{embedding_dim} dims...")
     index1 = build_hnsw_index(first_list, embedding_dim, use_dim=d1)
     print("[Stage 1] Ranking candidates...")
@@ -318,8 +324,8 @@ def select_embeddings(
     stage1_sorted = sorted(scores1, key=lambda x: x[0], reverse=reverse)
     candidates_stage1 = _collect_top_by_image(stage1_sorted, k1)
 
-    # Stage 2: HNSW on 1/4 dims
-    d2 = max(1, embedding_dim // 4)
+    # Stage 2: HNSW on reduced dims
+    d2 = max(1, embedding_dim // coarse_d2_div)
     print(f"[Stage 2] Building HNSW index on {d2}/{embedding_dim} dims...")
     index2 = build_hnsw_index(first_list, embedding_dim, use_dim=d2)
     print("[Stage 2] Re-ranking candidates...")
@@ -377,6 +383,8 @@ def select_embeddings_voting(
     coarse_to_fine=False,
     coarse_k1_mult=4,
     coarse_k2_mult=2,
+    coarse_d1_div=8,
+    coarse_d2_div=4,
     hnsw_batch_size=1024,
     exact_batch_size=2048,
 ):
@@ -408,6 +416,8 @@ def select_embeddings_voting(
                 coarse_to_fine=coarse_to_fine,
                 coarse_k1_mult=coarse_k1_mult,
                 coarse_k2_mult=coarse_k2_mult,
+                coarse_d1_div=coarse_d1_div,
+                coarse_d2_div=coarse_d2_div,
                 hnsw_batch_size=hnsw_batch_size,
                 exact_batch_size=exact_batch_size,
             )

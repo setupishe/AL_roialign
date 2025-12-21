@@ -51,6 +51,18 @@ if __name__ == "__main__":
         default=2.0,
         help="Coarse-to-fine Stage-2 candidate multiplier. k2 = k * ctf_k2_mult (default: 2).",
     )
+    parser.add_argument(
+        "--ctf-d1-div",
+        type=int,
+        default=8,
+        help="Coarse-to-fine Stage-1 dimension divisor. d1 = embedding_dim // ctf_d1_div (default: 8).",
+    )
+    parser.add_argument(
+        "--ctf-d2-div",
+        type=int,
+        default=4,
+        help="Coarse-to-fine Stage-2 dimension divisor. d2 = embedding_dim // ctf_d2_div (default: 4).",
+    )
 
     args = parser.parse_args()
 
@@ -70,6 +82,8 @@ if __name__ == "__main__":
     coarse_to_fine = args.coarse_to_fine
     ctf_k1_mult = args.ctf_k1_mult
     ctf_k2_mult = args.ctf_k2_mult
+    ctf_d1_div = args.ctf_d1_div
+    ctf_d2_div = args.ctf_d2_div
     embedding_hw = args.embedding_hw
     separate_maps_voting = args.separate_maps_voting
 
@@ -348,6 +362,8 @@ if __name__ == "__main__":
                 coarse_to_fine=coarse_to_fine,
                 coarse_k1_mult=ctf_k1_mult,
                 coarse_k2_mult=ctf_k2_mult,
+                coarse_d1_div=ctf_d1_div,
+                coarse_d2_div=ctf_d2_div,
             )
         else:
             first_list, second_list = filelists
@@ -360,6 +376,8 @@ if __name__ == "__main__":
                 coarse_to_fine=coarse_to_fine,
                 coarse_k1_mult=ctf_k1_mult,
                 coarse_k2_mult=ctf_k2_mult,
+                coarse_d1_div=ctf_d1_div,
+                coarse_d2_div=ctf_d2_div,
             )
         pickle_save(selected_path, selected)
 
