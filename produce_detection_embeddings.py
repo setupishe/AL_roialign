@@ -53,6 +53,7 @@ class YoloEmbeddingsProducer:
         embedding_tensors_hw_resolution_before_flattening: Optional[
             Sequence[int]
         ] = None,
+        matryoshka_slices: int = 8,
     ) -> None:
         self.save_crops = save_crops
         self.onnx_model_path = onnx_model_path
@@ -68,6 +69,10 @@ class YoloEmbeddingsProducer:
             ]
         )
         self.providers = providers
+        # Number of equal "Matryoshka prefix" blocks to create when `strategy` is not "default"/"separate".
+        # Each block contains 1/N of channels from EACH map, so any prefix of the final vector corresponds to
+        # the same fraction of all maps (what `al_utils._slice_vector()` assumes).
+        self.matryoshka_slices = int(matryoshka_slices)
         if embedding_tensors_hw_resolution_before_flattening is None:
             self.EMBEDDING_TENSORS_HW_RESOLUTION_BEFORE_FLATTENING = (
                 (12, 6) if strategy == "default" else (3, 3)
@@ -229,9 +234,15 @@ class YoloEmbeddingsProducer:
                     w * bbox.x_max,
                     h * bbox.y_max,
                 ]
+                # roi_align requires `input` and `rois` to have the same dtype (and device).
+                # ONNXRuntime outputs can be float32, while a Python-list ROI tensor defaults to float64.
+                input_tensor = torch.from_numpy(output_array).to(torch.float32)
+                rois = torch.tensor(
+                    [0] + feature_map_box, dtype=input_tensor.dtype, device=input_tensor.device
+                ).unsqueeze(0)
                 feature_vector = roi_align(
-                    torch.tensor(output_array),
-                    torch.tensor([0] + feature_map_box).unsqueeze(0),
+                    input_tensor,
+                    rois,
                     output_size,
                     aligned=True,
                 )
@@ -247,36 +258,46 @@ class YoloEmbeddingsProducer:
                 ]
             else:
                 # Matryoshka embedding
-                sorted_feature_vectors = sorted(
-                    feature_vectors, key=lambda v: v.shape[1]
-                )
+                # NOTE:
+                # Older versions of this code hard-validated a YOLOv8s-specific channel ratio (4:2:1).
+                # In practice, different model scales (e.g. yolov8m) can produce different channel ratios
+                # (e.g. 3:2:1 depending on `max_channels` and width scaling), so we make this path
+                # ratio-agnostic and only enforce the "prefix layout" property.
+                if len(feature_vectors) != 3:
+                    raise ValueError(
+                        f"Matryoshka embedding expects exactly 3 feature maps, got {len(feature_vectors)}. "
+                        f"Either pass exactly 3 `netron_layer_names` or use strategy='default'/'separate'."
+                    )
+
+                sorted_feature_vectors = sorted(feature_vectors, key=lambda v: v.shape[1])
                 t_low, t_mid, t_high = sorted_feature_vectors
 
                 low_c = int(t_low.shape[1])
                 mid_c = int(t_mid.shape[1])
                 high_c = int(t_high.shape[1])
 
-                val1 = high_c / low_c if low_c else float("inf")
-                val2 = high_c / mid_c if mid_c else float("inf")
-                if val1 + val2 + 1 != 7:
-                    raise ValueError(
-                        f"High_c {high_c} / low_c {low_c} = {val1} + high_c {high_c} / mid_c {mid_c} = {val2} + 1 != 7\n Try changing model size to s"
-                    )
-
                 # IMPORTANT: We want prefix slicing on the FINAL flattened vector to correspond to
                 # prefix slicing of channels from EACH map.
                 #
-                # Build 8 equal blocks (1/8 each). Block i contains:
-                # - channels [i/8 .. (i+1)/8) from LOW map
-                # - channels [i/8 .. (i+1)/8) from MID map
-                # - channels [i/8 .. (i+1)/8) from HIGH map
+                # Build `slices` equal blocks (1/slices each). Block i contains:
+                # - channels [i/slices .. (i+1)/slices) from LOW map
+                # - channels [i/slices .. (i+1)/slices) from MID map
+                # - channels [i/slices .. (i+1)/slices) from HIGH map
                 #
-                # This way vec[:D/8] contains 1/8 of *each* map (exactly what al_utils does).
-                slices = 8
+                # This way vec[:D/slices] contains 1/slices of *each* map (exactly what al_utils does).
+                preferred_slices = max(1, int(self.matryoshka_slices))
+                slices = preferred_slices
+                # If preferred_slices doesn't divide all channel counts, choose the largest divisor <= preferred_slices.
+                if (low_c % slices) or (mid_c % slices) or (high_c % slices):
+                    for cand in range(preferred_slices, 0, -1):
+                        if (low_c % cand == 0) and (mid_c % cand == 0) and (high_c % cand == 0):
+                            slices = cand
+                            break
                 if (low_c % slices) or (mid_c % slices) or (high_c % slices):
                     raise ValueError(
-                        f"Channel counts must be divisible by {slices} for blockwise prefix layout: "
-                        f"low={low_c}, mid={mid_c}, high={high_c}"
+                        "Could not find a common slice count to preserve Matryoshka prefix layout. "
+                        f"Got channels low={low_c}, mid={mid_c}, high={high_c}, preferred_slices={preferred_slices}. "
+                        "Tip: choose different 3 feature maps (netron layer names) or pass a smaller matryoshka_slices."
                     )
                 low_step = low_c // slices
                 mid_step = mid_c // slices

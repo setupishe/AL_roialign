@@ -1,4 +1,5 @@
 import argparse
+import json
 from al_utils import *
 from produce_detection_embeddings import *
 from preprocess_embedding_pool import *
@@ -19,6 +20,11 @@ if __name__ == "__main__":
     parser.add_argument("--cleanup", action="store_true")  # on/off flag
     parser.add_argument("--seg2line", action="store_true")  # on/off flag
     parser.add_argument("--skip-pca", action="store_true")  # on/off flag
+    parser.add_argument(
+        "--from-predictions",
+        action="store_true",
+        help="Use model predictions as bbox source (ignore per-image .txt annotation files). Default: use per-image .txt annotations.",
+    )
     parser.add_argument("--netron-layer-names")
     parser.add_argument(
         "--separate-maps-voting",
@@ -86,6 +92,20 @@ if __name__ == "__main__":
     ctf_d2_div = args.ctf_d2_div
     embedding_hw = args.embedding_hw
     separate_maps_voting = args.separate_maps_voting
+    # Default bbox source is annotations (historical behavior): `from_annotations_in_dir=True`.
+    # If user passes `--from-predictions`, switch to predicted bboxes.
+    from_annotations_in_dir = not args.from_predictions
+
+    def _done_path(folder: str) -> str:
+        return os.path.join(folder, "_DONE.json")
+
+    def _write_done(folder: str, payload: dict) -> None:
+        os.makedirs(folder, exist_ok=True)
+        with open(_done_path(folder), "w") as f:
+            json.dump(payload, f, indent=2, sort_keys=True)
+
+    def _count_npy(folder: str) -> int:
+        return len(glob.glob(f"{folder}/**/*.npy", recursive=True))
 
     conf_path = "/".join(weights.split("/")[:-2]) + "/best_conf.txt"
     with open(conf_path, "r") as f:
@@ -114,19 +134,21 @@ if __name__ == "__main__":
     )
 
     original_dataset = f"/home/setupishe/datasets/{dataset_name}/images/train/"
-    if len(filelist := glob.glob(f"{original_dataset}*jpg")) == len(
-        glob.glob(f"{original_dataset}*txt")
-    ):
-        print("Skipping populating, already exist...")
+    filelist = glob.glob(f"{original_dataset}*jpg")
+    if from_annotations_in_dir:
+        if len(filelist) == len(glob.glob(f"{original_dataset}*txt")):
+            print("Skipping populating, already exist...")
+        else:
+            for file in tqdm(filelist):
+                label_file = file.replace("images", "labels").replace("jpg", "txt")
+                if os.path.exists(label_file):
+                    segfile2bboxfile(
+                        label_file, file.replace("jpg", "txt"), seg2line=seg2line
+                    )
+                else:
+                    os.mknod(file.replace("jpg", "txt"))
     else:
-        for file in tqdm(filelist):
-            label_file = file.replace("images", "labels").replace("jpg", "txt")
-            if os.path.exists(label_file):
-                segfile2bboxfile(
-                    label_file, file.replace("jpg", "txt"), seg2line=seg2line
-                )
-            else:
-                os.mknod(file.replace("jpg", "txt"))
+        print("Skipping populating annotation txts because --from-predictions is enabled.")
 
     onnx_path = weights.replace(".pt", ".onnx")
 
@@ -139,21 +161,26 @@ if __name__ == "__main__":
 
     embeds_dir = f"/home/setupishe/datasets/embeds_{from_fraction}_{split_name}"
     print("Estimating total embeds amount...")
-    total_embeds_count = 0
-    for file in tqdm(glob.glob(f"{original_dataset}*txt")):
-        with open(file, "r") as f:
-            total_embeds_count += len(f.readlines())
-    expected_embeddings_files = (
-        total_embeds_count * 3 if separate_maps_voting else total_embeds_count
-    )
+    expected_embeddings_files = None
+    if from_annotations_in_dir:
+        total_embeds_count = 0
+        for file in tqdm(glob.glob(f"{original_dataset}*txt")):
+            with open(file, "r") as f:
+                total_embeds_count += len(f.readlines())
+        expected_embeddings_files = (
+            total_embeds_count * 3 if separate_maps_voting else total_embeds_count
+        )
+    else:
+        print("Using predictions as bbox source; embeds count will be derived from produced .npy files.")
     compute_embeds = True
     if os.path.exists(embeds_dir):
-        if (
-            len(glob.glob(f"{embeds_dir}/**/*.npy", recursive=True))
-            == expected_embeddings_files
+        done_exists = os.path.exists(_done_path(embeds_dir))
+        actual_npy = _count_npy(embeds_dir)
+        if done_exists and (
+            (expected_embeddings_files is None) or (actual_npy == expected_embeddings_files)
         ):
             compute_embeds = False
-            print("Skipping embeds computation since they already exist")
+            print("Skipping embeds computation since they already exist (_DONE.json present)")
         else:
             shutil.rmtree(embeds_dir)
 
@@ -200,13 +227,34 @@ if __name__ == "__main__":
         yep.produce_embeddings_for_dir(
             dir_path=original_dataset,
             embedding_and_crops_save_dir=embeds_dir,
-            from_annotations_in_dir=True,
+            from_annotations_in_dir=from_annotations_in_dir,
             conf_thres=float(conf),
             iou_thres=0.4,
             n=-1,
             random_images=False,
             each_k_th_image=None,
         )
+        # Mark completion and record actual count (works for both annotation- and prediction-based bbox sources).
+        actual_npy = _count_npy(embeds_dir)
+        expected_embeddings_files = actual_npy
+        _write_done(
+            embeds_dir,
+            {
+                "stage": "embeddings",
+                "bbox_source": "annotations" if from_annotations_in_dir else "predictions",
+                "separate_maps_voting": bool(separate_maps_voting),
+                "netron_layer_names": netron_layer_names,
+                "embedding_hw": embedding_hw,
+                "onnx_path": onnx_path,
+                "conf": float(conf),
+                "iou_thres": 0.4,
+                "npy_files": int(actual_npy),
+            },
+        )
+    else:
+        # If we skipped computation, still define expected_embeddings_files for downstream checks.
+        if expected_embeddings_files is None:
+            expected_embeddings_files = _count_npy(embeds_dir)
 
     print("\n===============Preprocessing embeds with PCA...===============")
     embeddings_source = embeds_dir
@@ -216,12 +264,13 @@ if __name__ == "__main__":
 
     preprocess_embeds = True
     if os.path.exists(reduced_embeds_dir):
-        if (
-            len(glob.glob(f"{reduced_embeds_dir}/**/*.npy", recursive=True))
-            == expected_embeddings_files
+        done_exists = os.path.exists(_done_path(reduced_embeds_dir))
+        actual_npy = _count_npy(reduced_embeds_dir)
+        if done_exists and (
+            (expected_embeddings_files is None) or (actual_npy == expected_embeddings_files)
         ):
             preprocess_embeds = False
-            print("Skipping embeds preprocessing since its already done")
+            print("Skipping embeds preprocessing since its already done (_DONE.json present)")
         else:
             shutil.rmtree(reduced_embeds_dir)
 
@@ -252,6 +301,16 @@ if __name__ == "__main__":
                     batch_size=512,
                 )
                 epp.run_l2_normalization()
+            _write_done(
+                reduced_embeds_dir,
+                {
+                    "stage": "preprocess",
+                    "mode": "l2_normalization_only",
+                    "separate_maps_voting": bool(separate_maps_voting),
+                    "source_dir": embeddings_source,
+                    "npy_files": int(_count_npy(reduced_embeds_dir)),
+                },
+            )
         else:
             print("Creating subset folder for PCA training...")
             temp_folder = f"temp_folder_{from_fraction}_{split_name}"
@@ -287,6 +346,17 @@ if __name__ == "__main__":
             epp.run_dimension_reduction(mode="PCA")
 
             shutil.rmtree(temp_folder)
+            _write_done(
+                reduced_embeds_dir,
+                {
+                    "stage": "preprocess",
+                    "mode": "pca_then_l2",
+                    "separate_maps_voting": bool(separate_maps_voting),
+                    "source_dir": embeddings_source,
+                    "target_length": 512,
+                    "npy_files": int(_count_npy(reduced_embeds_dir)),
+                },
+            )
 
     # #removing whole img embeds, leaving only bboxes embeds
     # for file in glob.glob(f"{reduced_embeds_dir}/**/*npy, recursive=True"):
@@ -430,8 +500,10 @@ if __name__ == "__main__":
     if cleanup:
         print("\n===============Cleaning up...===============")
 
-        for file in glob.glob(f"{original_dataset}*txt"):
-            os.remove(file)
+        # Only remove per-image annotation txts if we created/needed them.
+        if from_annotations_in_dir:
+            for file in glob.glob(f"{original_dataset}*txt"):
+                os.remove(file)
 
         shutil.rmtree(embeds_dir)
         shutil.rmtree(reduced_embeds_dir)
