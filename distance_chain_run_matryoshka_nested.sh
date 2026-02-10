@@ -31,12 +31,12 @@ for range in "${ranges[@]}"; do
   
   # Run the preparation script with the calculated arguments
   python3 prepare_al_split.py \
-    --weights /home/setupishe/ultralytics/runs/detect/VOC_${folder_name}_${range}_s_matryoshka_everything_really_everything_pseudo/weights/best.pt \
+    --weights /home/setupishe/ultralytics/runs/detect/VOC_${folder_name}_${range}_m_matryoshka_everything_really_everything_pseudo/weights/best.pt \
     --from-fraction $range \
     --to-fraction 0$next_range \
     --from-split train_${range}${fromsplit_name}.txt \
     --dataset-name VOC \
-    --split-name distance_matryoshka_everything_really_everything_pseudo \
+    --split-name distance_matryoshka_everything_really_everything_pseudo_m \
     --mode distance \
     --bg2all-ratio 0 \
     --device $device \
@@ -58,11 +58,11 @@ for range in "${ranges[@]}"; do
   echo "TRAINING ON FRACTION 0$next_range"
   
   yolo detect mode=train \
-  model=yolov8s.pt \
+  model=yolov8m.pt \
   pretrained=False \
-  data=VOC_0${next_range}_distance_matryoshka_everything_really_everything_pseudo.yaml \
+  data=VOC_0${next_range}_distance_matryoshka_everything_really_everything_pseudo_m.yaml \
   batch=48 \
-  name=VOC_distance_0${next_range}_s_matryoshka_everything_really_everything_pseudo \
+  name=VOC_distance_0${next_range}_m_matryoshka_everything_really_everything_pseudo \
   device=$device \
   epochs=65 \
   matryoshka=True \
