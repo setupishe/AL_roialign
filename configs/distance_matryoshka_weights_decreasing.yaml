@@ -1,0 +1,26 @@
+# Replaces: distance_chain_run_matryoshka_weights_decreasing.sh
+# Weights sourced from models trained with decreasing Matryoshka weights (yolov8s)
+mode: distance
+dataset_name: VOC
+device: 0
+ranges: [0.2, 0.3, 0.4, 0.5, 0.6]
+bg2all_ratio: 0
+prepare_script: prepare_al_split.py
+weights_base_path: /home/setupishe/ultralytics/runs/detect
+weights_template: "${weights_base_path}/VOC_${folder_name}_${range}_s_matryoshka_weights_decreasing/weights/best.pt"
+split_name: distance
+
+prepare_args:
+  seg2line: true
+  cleanup: true
+
+yolo_args:
+  model: yolov8s.pt
+  pretrained: "False"
+  data: "VOC_${next_range}_distance.yaml"
+  batch: 48
+  name: "VOC_distance_${next_range}_s_matryoshka_weights_decreasing"
+  device: "${device}"
+  epochs: 65
+  matryoshka: "True"
+  matryoshka_weights: "1.0, 0.8, 0.4, 0.2"

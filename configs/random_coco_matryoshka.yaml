@@ -1,0 +1,20 @@
+# Replaces: random_train_runs.sh
+# Single-fraction COCO training with full Matryoshka (yolov8m)
+type: random_train
+fractions: [0.7]
+
+yolo_args:
+  data: "COCO_${fraction}.yaml"
+  model: yolov8m.pt
+  imgsz: 640
+  batch: 48
+  epochs: 65
+  pretrained: "False"
+  name: "COCO_random_${fraction}_m_matryoshka_everything"
+  matryoshka: "True"
+  matryoshka_shared_assign: "True"
+  matryoshka_bn_aux_freeze: "True"
+  matryoshka_weights: "[0.2,0.3,0.4,1.0]"
+  matryoshka_weight_warmup: "True"
+  matryoshka_weight_warmup_start_step: 10
+  matryoshka_weight_warmup_steps: 20

@@ -7,4 +7,5 @@
 *.joblib
 *.pt
 *.yaml
+!configs/*.yaml
 *src
