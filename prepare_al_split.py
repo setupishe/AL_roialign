@@ -44,6 +44,16 @@ if __name__ == "__main__":
     parser.add_argument(
         "--index-backend", default="annoy", choices=["annoy", "hnsw"]
     )  # new flag
+    parser.add_argument(
+        "--datasets-dir",
+        default="/home/setupishe/datasets",
+        help="Base directory that contains all datasets (default: /home/setupishe/datasets).",
+    )
+    parser.add_argument(
+        "--ultralytics-cfg-dir",
+        default="/home/setupishe/ultralytics/ultralytics/cfg/datasets",
+        help="Directory containing ultralytics YAML dataset configs (default: /home/setupishe/ultralytics/ultralytics/cfg/datasets).",
+    )
     parser.add_argument("--coarse-to-fine", action="store_true")  # new flag
     parser.add_argument(
         "--ctf-k1-mult",
@@ -92,6 +102,8 @@ if __name__ == "__main__":
     ctf_d2_div = args.ctf_d2_div
     embedding_hw = args.embedding_hw
     separate_maps_voting = args.separate_maps_voting
+    datasets_dir = args.datasets_dir
+    ultralytics_cfg_dir = args.ultralytics_cfg_dir
     # Default bbox source is annotations (historical behavior): `from_annotations_in_dir=True`.
     # If user passes `--from-predictions`, switch to predicted bboxes.
     from_annotations_in_dir = not args.from_predictions
@@ -111,12 +123,12 @@ if __name__ == "__main__":
     with open(conf_path, "r") as f:
         conf = float(f.readline())
 
-    txt_path = f"/home/setupishe/datasets/{dataset_name}/{from_split}"
+    txt_path = f"{datasets_dir}/{dataset_name}/{from_split}"
 
     import time
 
     def check_busy():
-        while len((embeds_names := glob.glob("/home/setupishe/datasets/*embeds*"))) > 0:
+        while len((embeds_names := glob.glob(f"{datasets_dir}/*embeds*"))) > 0:
             if any([split_name in x for x in embeds_names]):
                 break
             else:
@@ -133,7 +145,7 @@ if __name__ == "__main__":
         "\n===============Populating image dir with corresponding formatted anno files...==============="
     )
 
-    original_dataset = f"/home/setupishe/datasets/{dataset_name}/images/train/"
+    original_dataset = f"{datasets_dir}/{dataset_name}/images/train/"
     filelist = glob.glob(f"{original_dataset}*jpg")
     if from_annotations_in_dir:
         if len(filelist) == len(glob.glob(f"{original_dataset}*txt")):
@@ -159,7 +171,7 @@ if __name__ == "__main__":
 
     print("\n===============Infering model on all available data...===============")
 
-    embeds_dir = f"/home/setupishe/datasets/embeds_{from_fraction}_{split_name}"
+    embeds_dir = f"{datasets_dir}/embeds_{from_fraction}_{split_name}"
     print("Estimating total embeds amount...")
     expected_embeddings_files = None
     if from_annotations_in_dir:
@@ -259,7 +271,7 @@ if __name__ == "__main__":
     print("\n===============Preprocessing embeds with PCA...===============")
     embeddings_source = embeds_dir
     reduced_embeds_dir = (
-        f"/home/setupishe/datasets/reduced_embeds_{from_fraction}_{split_name}"
+        f"{datasets_dir}/reduced_embeds_{from_fraction}_{split_name}"
     )
 
     preprocess_embeds = True
@@ -459,7 +471,7 @@ if __name__ == "__main__":
     free_bgs = []
     for file in tqdm(
         glob.glob(
-            f"/home/setupishe/datasets/{dataset_name}/labels/train/*txt", recursive=True
+            f"{datasets_dir}/{dataset_name}/labels/train/*txt", recursive=True
         )
     ):
         name = os.path.basename(file)
@@ -471,7 +483,7 @@ if __name__ == "__main__":
         for x in random.sample(free_bgs, int(target_num * bg2all_ratio))
     ]
     res_path = (
-        f"/home/setupishe/datasets/{dataset_name}/train_{to_fraction}_{split_name}.txt"
+        f"{datasets_dir}/{dataset_name}/train_{to_fraction}_{split_name}.txt"
     )
 
     with open(res_path, "w") as f:
@@ -479,9 +491,9 @@ if __name__ == "__main__":
 
     print(f"`{res_path}` saved successfully.")
 
-    yaml_path = f"/home/setupishe/ultralytics/ultralytics/cfg/datasets/{dataset_name}_{to_fraction}_{split_name}.yaml"
+    yaml_path = f"{ultralytics_cfg_dir}/{dataset_name}_{to_fraction}_{split_name}.yaml"
     with open(
-        f"/home/setupishe/ultralytics/ultralytics/cfg/datasets/{dataset_name}.yaml", "r"
+        f"{ultralytics_cfg_dir}/{dataset_name}.yaml", "r"
     ) as from_file:
         lines = from_file.readlines()
 
@@ -508,7 +520,7 @@ if __name__ == "__main__":
         shutil.rmtree(embeds_dir)
         shutil.rmtree(reduced_embeds_dir)
 
-        for file in glob.glob("/home/setupishe/datasets/*joblib"):
+        for file in glob.glob(f"{datasets_dir}/*joblib"):
             os.remove(file)
 
         os.remove(first_list_path)
