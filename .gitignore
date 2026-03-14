@@ -9,3 +9,4 @@
 *.yaml
 !configs/*.yaml
 *src
+.cursor/rules/
