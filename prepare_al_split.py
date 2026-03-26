@@ -54,7 +54,13 @@ if __name__ == "__main__":
         default="/home/setupishe/ultralytics/ultralytics/cfg/datasets",
         help="Directory containing ultralytics YAML dataset configs (default: /home/setupishe/ultralytics/ultralytics/cfg/datasets).",
     )
-    parser.add_argument("--coarse-to-fine", action="store_true")  # new flag
+    parser.add_argument("--coarse-to-fine", action="store_true")
+    parser.add_argument(
+        "--granularity-divs",
+        default="8 4 2 1",
+        help="Space-separated divisors for matryoshka_variance granularity levels. "
+             "Each value d produces prefix dim = embedding_dim // d (default: '8 4 2 1').",
+    )
     parser.add_argument(
         "--ctf-k1-mult",
         type=float,
@@ -96,6 +102,7 @@ if __name__ == "__main__":
     skip_pca = args.skip_pca
     index_backend = args.index_backend
     coarse_to_fine = args.coarse_to_fine
+    granularity_divs = [int(x) for x in args.granularity_divs.split()]
     ctf_k1_mult = args.ctf_k1_mult
     ctf_k2_mult = args.ctf_k2_mult
     ctf_d1_div = args.ctf_d1_div
@@ -460,6 +467,7 @@ if __name__ == "__main__":
                 coarse_k2_mult=ctf_k2_mult,
                 coarse_d1_div=ctf_d1_div,
                 coarse_d2_div=ctf_d2_div,
+                granularity_divs=granularity_divs,
             )
         pickle_save(selected_path, selected)
 

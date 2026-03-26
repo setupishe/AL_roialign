@@ -203,6 +203,77 @@ def _exact_knn_distances_cosine(
     return smallest.astype(np.float32).tolist()
 
 
+def _select_by_granularity_variance(
+    first_list,
+    second_list,
+    k,
+    granularity_divs=None,
+):
+    """
+    Score each candidate in second_list by the variance of its 1-NN cosine distance
+    to the labeled pool (first_list) across multiple embedding granularity levels.
+
+    Granularity levels are defined as prefixes of the full embedding dimension:
+      d_g = embedding_dim // div  for each div in granularity_divs
+
+    High variance means the example's proximity to the labeled pool changes
+    significantly across scales — a signal of ambiguity or boundary proximity.
+    """
+    if granularity_divs is None:
+        granularity_divs = [8, 4, 2, 1]
+
+    embedding_dim = get_embedding_dim(first_list)
+    granularity_dims = [max(1, embedding_dim // int(d)) for d in granularity_divs]
+    # Deduplicate while preserving order (coarsest → finest)
+    seen_dims = set()
+    unique_dims = []
+    for d in granularity_dims:
+        if d not in seen_dims:
+            seen_dims.add(d)
+            unique_dims.append(d)
+    granularity_dims = unique_dims
+
+    print(
+        f"[matryoshka_variance] granularity dims: {granularity_dims} "
+        f"(from embedding_dim={embedding_dim})"
+    )
+
+    # Pre-load labeled pool matrix at each granularity level
+    print("[matryoshka_variance] Pre-loading labeled pool matrices...")
+    first_matrices = []
+    for dim in granularity_dims:
+        mat = _load_matrix(first_list, use_dim=dim, normalize=True)
+        first_matrices.append(mat)
+
+    # Score each candidate
+    scored = []
+    for file in tqdm(second_list, desc="Scoring candidates (granularity variance)"):
+        vec = np.load(file).squeeze(0).astype(np.float32)
+        dists = []
+        for mat, dim in zip(first_matrices, granularity_dims):
+            v = _slice_vector(vec, dim)
+            cos_dists = 1.0 - (mat @ v)
+            dists.append(float(np.min(cos_dists)))
+        score = float(np.var(dists))
+        scored.append((score, file))
+
+    # Sort descending — highest variance first
+    scored.sort(key=lambda x: x[0], reverse=True)
+
+    res = []
+    seen = set()
+    for score, f in scored:
+        name = os.path.basename(f)
+        img_name = name[: name.index("_cropped")]
+        if img_name in seen:
+            continue
+        seen.add(img_name)
+        res.append(img_name)
+        if len(res) >= k:
+            break
+    return res
+
+
 def select_embeddings(
     first_list,
     second_list,
@@ -217,9 +288,10 @@ def select_embeddings(
     coarse_d2_div=4,
     hnsw_batch_size=1024,
     exact_batch_size=2048,
+    granularity_divs=None,
 ):
-    if mode not in ["distance", "density"]:
-        raise ValueError("`mode` should be either in distance or density")
+    if mode not in ["distance", "density", "matryoshka_variance"]:
+        raise ValueError("`mode` should be 'distance', 'density', or 'matryoshka_variance'")
     if k is None and n is None:
         raise ValueError("either `n` of `k` should be specified")
     elif k is not None and n is not None:
@@ -227,14 +299,20 @@ def select_embeddings(
     if backend not in ["annoy", "hnsw"]:
         raise ValueError("`backend` should be either 'annoy' or 'hnsw'")
 
+    total_embeddings = len(second_list)
+    k_int = int(total_embeddings // n) if n is not None else int(k)
+
+    if mode == "matryoshka_variance":
+        return _select_by_granularity_variance(
+            first_list, second_list, k=k_int, granularity_divs=granularity_divs
+        )
+
     embedding_dim = get_embedding_dim(first_list)
     # Density uses k-NN (intended: 5-NN); distance uses 1-NN
     nn_k = 5 if mode == "density" else 1
     nn_k = min(nn_k, max(1, len(first_list)))
 
-    # Determine final k as integer count
-    total_embeddings = len(second_list)
-    k = int(total_embeddings // n) if n is not None else int(k)
+    k = k_int
     reverse = mode == "distance"
 
     def _score_files_hnsw(index, files, use_dim: int, nn_k: int, batch_size: int):
