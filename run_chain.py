@@ -129,6 +129,7 @@ def run_active_learning(cfg: dict, config_path: str) -> None:
     prepare_script: str     = cfg.get("prepare_script", "prepare_al_split.py")
     weights_base_path: str  = cfg.get("weights_base_path", "runs/detect")
     weights_template: str | None = cfg.get("weights_template")
+    first_weights_template: str | None = cfg.get("first_weights_template")
     # fromsplit_suffix: what to append to "train_{range}" for the from-split file
     # on the first range it is always "" (= random baseline)
     fromsplit_suffix: str   = cfg.get("fromsplit_suffix", f"_{mode}")
@@ -166,8 +167,9 @@ def run_active_learning(cfg: dict, config_path: str) -> None:
         }
 
         # ── weights path ──────────────────────────────────────────────────────
-        if weights_template:
-            weights_path = expand(weights_template, ctx)
+        active_template = (first_weights_template if is_first and first_weights_template else weights_template)
+        if active_template:
+            weights_path = expand(active_template, ctx)
         else:
             weights_path = f"{weights_base_path}/VOC_{folder_name}_{range_val}/weights/best.pt"
 
