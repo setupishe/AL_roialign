@@ -63,12 +63,52 @@ def build_yolo_args(template: dict, ctx: dict) -> list[str]:
 
 # ── experiment dir helpers ────────────────────────────────────────────────────
 
-def save_config_to_exp(config_path: str, run_name: str) -> None:
+def _yolo_save_dir_candidates(
+    run_name: str,
+    yolo_template: dict | None,
+    ctx: dict | None,
+) -> list[Path]:
+    """Paths where Ultralytics may have written the run (CWD vs global runs_dir vs explicit project)."""
+    ctx = ctx or {}
+    task = str((yolo_template or {}).get("task", "detect"))
+    out: list[Path] = []
+
+    if yolo_template and (raw := yolo_template.get("project")):
+        out.append(Path(expand(raw, ctx)) / run_name)
+
+    try:
+        from ultralytics.utils import RUNS_DIR
+
+        out.append(RUNS_DIR / task / run_name)
+    except ImportError:
+        out.append(Path.home() / "ultralytics" / "runs" / task / run_name)
+
+    out.extend(
+        [
+            Path("runs") / task / run_name,
+            Path("runs") / "detect" / run_name,
+            Path("runs") / run_name,
+        ]
+    )
+    # De-dupe while preserving order
+    seen: set[str] = set()
+    unique: list[Path] = []
+    for p in out:
+        key = str(p.resolve())
+        if key not in seen:
+            seen.add(key)
+            unique.append(p)
+    return unique
+
+
+def save_config_to_exp(
+    config_path: str,
+    run_name: str,
+    yolo_template: dict | None = None,
+    ctx: dict | None = None,
+) -> None:
     """Copy the YAML config into the YOLO experiment output directory."""
-    for candidate in [
-        Path("runs") / "detect" / run_name,
-        Path("runs") / run_name,
-    ]:
+    for candidate in _yolo_save_dir_candidates(run_name, yolo_template, ctx):
         if candidate.exists():
             dest = candidate / Path(config_path).name
             shutil.copy2(config_path, dest)
@@ -217,7 +257,7 @@ def run_active_learning(cfg: dict, config_path: str) -> None:
             None,
         )
         if run_name:
-            save_config_to_exp(config_path, run_name)
+            save_config_to_exp(config_path, run_name, yolo_template, ctx)
 
         print(f"  Done: {next_range_str}\n")
 
@@ -248,7 +288,7 @@ def run_random_train(cfg: dict, config_path: str) -> None:
             None,
         )
         if run_name:
-            save_config_to_exp(config_path, run_name)
+            save_config_to_exp(config_path, run_name, yolo_template, ctx)
 
     print("\n=== Training Complete ===")
 
