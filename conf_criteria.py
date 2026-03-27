@@ -245,7 +245,7 @@ for img_path in tqdm(inference_list):
     label_path = jpg2txt(dataset_folder + img_path[1:])
 
     if not os.path.exists(pred_path):
-        os.mknod(pred_path)
+        open(pred_path, "a").close()
 
     tp = fp = fn = 0
 

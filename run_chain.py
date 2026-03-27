@@ -130,12 +130,16 @@ def run_active_learning(cfg: dict, config_path: str) -> None:
     weights_base_path: str  = cfg.get("weights_base_path", "runs/detect")
     weights_template: str | None = cfg.get("weights_template")
     first_weights_template: str | None = cfg.get("first_weights_template")
+    datasets_dir: str       = cfg.get("datasets_dir", "/home/setupishe/datasets")
+    ultralytics_cfg_dir: str | None = cfg.get("ultralytics_cfg_dir")
     # fromsplit_suffix: what to append to "train_{range}" for the from-split file
     # on the first range it is always "" (= random baseline)
     fromsplit_suffix: str   = cfg.get("fromsplit_suffix", f"_{mode}")
     tune: bool              = cfg.get("tune", False)
     prepare_args: dict      = cfg.get("prepare_args", {})
     yolo_template: dict     = cfg.get("yolo_args", {})
+    if len(ranges) < 2:
+        raise ValueError("`ranges` must contain at least two values (from and to).")
 
     print("=== Active Learning Chain Runner ===")
     print(f"Config:  {config_path}")
@@ -144,11 +148,11 @@ def run_active_learning(cfg: dict, config_path: str) -> None:
     print(f"Ranges:  {ranges}  |  Tune: {tune}")
     print("====================================\n")
 
-    for range_val in ranges:
-        next_range    = round(range_val + 0.1, 1)
+    for i, range_val in enumerate(ranges[:-1]):
+        next_range    = ranges[i + 1]
         range_str     = f"{range_val}"
-        next_range_str = f"{next_range:.1f}"
-        is_first      = (range_val == ranges[0])
+        next_range_str = f"{next_range}"
+        is_first      = (i == 0)
         folder_name   = "random" if is_first else mode
         from_suffix   = "" if is_first else fromsplit_suffix
 
@@ -171,9 +175,32 @@ def run_active_learning(cfg: dict, config_path: str) -> None:
         if active_template:
             weights_path = expand(active_template, ctx)
         else:
-            weights_path = f"{weights_base_path}/VOC_{folder_name}_{range_val}/weights/best.pt"
+            weights_path = f"{weights_base_path}/{dataset_name}_{folder_name}_{range_val}/weights/best.pt"
 
-        from_split = f"train_{range_val}{from_suffix}.txt"
+        from_split_candidates: list[str] = []
+        if is_first:
+            from_split_candidates.append(f"train_{range_val}.txt")
+        else:
+            if from_suffix:
+                from_split_candidates.append(f"train_{range_val}{from_suffix}.txt")
+            from_split_candidates.append(f"train_{range_val}_{split_name}.txt")
+            if split_name != mode:
+                from_split_candidates.append(f"train_{range_val}_{mode}.txt")
+            from_split_candidates.append(f"train_{range_val}.txt")
+
+        # De-dupe while preserving order.
+        from_split_candidates = list(dict.fromkeys(from_split_candidates))
+        split_root = Path(datasets_dir) / dataset_name
+        existing_from_split = next(
+            (name for name in from_split_candidates if (split_root / name).exists()),
+            None,
+        )
+        if existing_from_split is None:
+            raise FileNotFoundError(
+                "Could not find from-split file. Tried: "
+                + ", ".join(str(split_root / x) for x in from_split_candidates)
+            )
+        from_split = existing_from_split
 
         print(f"── PREPARE  {range_val} → {next_range_str} ──────────────────")
 
@@ -190,6 +217,8 @@ def run_active_learning(cfg: dict, config_path: str) -> None:
                 "--split-name", split_name,
                 "--bg2all-ratio", str(bg2all_ratio),
             ]
+            if prepare_args.get("seg2line"):
+                cmd.append("--seg2line")
             if prepare_args.get("cleanup"):
                 cmd.append("--cleanup")
         else:
@@ -204,7 +233,10 @@ def run_active_learning(cfg: dict, config_path: str) -> None:
                 "--mode", mode,
                 "--bg2all-ratio", str(bg2all_ratio),
                 "--device", str(device),
+                "--datasets-dir", datasets_dir,
             ]
+            if ultralytics_cfg_dir:
+                cmd.extend(["--ultralytics-cfg-dir", ultralytics_cfg_dir])
             if prepare_args.get("seg2line"):
                 cmd.append("--seg2line")
             if prepare_args.get("cleanup"):
@@ -215,6 +247,16 @@ def run_active_learning(cfg: dict, config_path: str) -> None:
                 cmd.extend(["--index-backend", pa])
             if prepare_args.get("coarse_to_fine"):
                 cmd.append("--coarse-to-fine")
+            if gd := prepare_args.get("granularity_divs"):
+                cmd.extend(["--granularity-divs", str(gd)])
+            if v := prepare_args.get("ctf_k1_mult"):
+                cmd.extend(["--ctf-k1-mult", str(v)])
+            if v := prepare_args.get("ctf_k2_mult"):
+                cmd.extend(["--ctf-k2-mult", str(v)])
+            if v := prepare_args.get("ctf_d1_div"):
+                cmd.extend(["--ctf-d1-div", str(v)])
+            if v := prepare_args.get("ctf_d2_div"):
+                cmd.extend(["--ctf-d2-div", str(v)])
             if hw := prepare_args.get("roi_hw"):
                 cmd.extend(["--roi-hw"] + [str(x) for x in hw])
             if nl := prepare_args.get("netron_layer_names"):
@@ -245,12 +287,8 @@ def run_active_learning(cfg: dict, config_path: str) -> None:
                 "optimizer=AdamW",
             ]
 
-        # ── confirm & train ───────────────────────────────────────────────────
+        # ── train ───────────────────────────────────────────────────────────
         print(f"\n── TRAIN  {next_range_str} ──────────────────────────────────")
-        answer = input(f"Proceed with training for {next_range_str}? [y/N] ").strip().lower()
-        if answer != "y":
-            print("Training cancelled. Exiting.")
-            sys.exit(0)
 
         subprocess.run(["yolo", "train"] + yolo_args, check=True)
 

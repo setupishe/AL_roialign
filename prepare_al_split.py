@@ -147,7 +147,7 @@ if __name__ == "__main__":
 
     with open(txt_path, "r") as f:
         lines = f.readlines()
-        from_names = [os.path.basename(x)[:-1] for x in lines]
+        from_names = [os.path.basename(x.strip()) for x in lines if x.strip()]
     print(
         "\n===============Populating image dir with corresponding formatted anno files...==============="
     )
@@ -165,7 +165,7 @@ if __name__ == "__main__":
                         label_file, file.replace("jpg", "txt"), seg2line=seg2line
                     )
                 else:
-                    os.mknod(file.replace("jpg", "txt"))
+                    open(file.replace("jpg", "txt"), "a").close()
     else:
         print("Skipping populating annotation txts because --from-predictions is enabled.")
 
@@ -214,7 +214,7 @@ if __name__ == "__main__":
         # ========================================
         netron_layer_names = (
             args.netron_layer_names.split()
-            if "netron_layer_names" in args
+            if args.netron_layer_names
             else default_netron_layer_names
         )
         if separate_maps_voting and len(netron_layer_names) != 3:
@@ -226,7 +226,7 @@ if __name__ == "__main__":
         else:
             strategy = (
                 "default"
-                if args.netron_layer_names == default_netron_layer_names
+                if netron_layer_names == default_netron_layer_names
                 else "iter"
             )
         provider = [
