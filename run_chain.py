@@ -64,6 +64,8 @@ def build_yolo_args(template: dict, ctx: dict) -> list[str]:
 # YAML `prepare_args` keys → extra argv for prepare scripts (flag names = key with `_` → `-`).
 _PREPARE_BOOL_KEYS = frozenset(
     {
+        "batched_inference",
+        "save_crops",
         "seg2line",
         "cleanup",
         "skip_pca",
@@ -75,6 +77,8 @@ _PREPARE_BOOL_KEYS = frozenset(
 _PREPARE_VALUE_KEYS = frozenset(
     {
         "index_backend",
+        "io_workers",
+        "onnx_batch_size",
         "granularity_divs",
         "ctf_k1_mult",
         "ctf_k2_mult",
@@ -91,19 +95,24 @@ def _prepare_args_to_argv(prepare_args: dict) -> list[str]:
     """Turn cfg `prepare_args` dict into CLI tokens for prepare_al_split.py (and conf_criteria subset)."""
     argv: list[str] = []
     for key, val in prepare_args.items():
-        if val is None or val is False:
+        if val is None:
             continue
         if key not in _PREPARE_KNOWN_KEYS:
             raise ValueError(
                 f"Unknown prepare_args key '{key}'. Known: {sorted(_PREPARE_KNOWN_KEYS)}"
             )
-        flag = "--" + key.replace("_", "-")
         if key in _PREPARE_BOOL_KEYS:
-            if val:
+            if key == "batched_inference":
+                if val is False:
+                    argv.append("--no-batched-inference")
+            elif val:
+                flag = "--" + key.replace("_", "-")
                 argv.append(flag)
         elif key == "roi_hw":
+            flag = "--" + key.replace("_", "-")
             argv.extend([flag] + [str(x) for x in val])
         else:
+            flag = "--" + key.replace("_", "-")
             argv.extend([flag, str(val)])
     return argv
 

@@ -1,5 +1,6 @@
 import argparse
 import json
+import onnx
 from al_utils import *
 from produce_detection_embeddings import *
 from preprocess_embedding_pool import *
@@ -85,6 +86,30 @@ if __name__ == "__main__":
         default=4,
         help="Coarse-to-fine Stage-2 dimension divisor. d2 = embedding_dim // ctf_d2_div (default: 4).",
     )
+    parser.add_argument(
+        "--no-batched-inference",
+        dest="batched_inference",
+        action="store_false",
+        help="Disable batched ONNX inference and keep batch_size=1 behavior.",
+    )
+    parser.add_argument(
+        "--save-crops",
+        action="store_true",
+        help="Persist cropped JPG files next to embeddings. Disabled by default for faster AL preparation.",
+    )
+    parser.add_argument(
+        "--onnx-batch-size",
+        type=int,
+        default=16,
+        help="Batch size for ONNX embedding inference (default: 16).",
+    )
+    parser.add_argument(
+        "--io-workers",
+        type=int,
+        default=4,
+        help="Number of worker threads used for image reads (default: 4).",
+    )
+    parser.set_defaults(batched_inference=True)
 
     args = parser.parse_args()
 
@@ -107,6 +132,10 @@ if __name__ == "__main__":
     ctf_k2_mult = args.ctf_k2_mult
     ctf_d1_div = args.ctf_d1_div
     ctf_d2_div = args.ctf_d2_div
+    batched_inference = args.batched_inference
+    save_crops = args.save_crops
+    onnx_batch_size = args.onnx_batch_size
+    io_workers = args.io_workers
     embedding_hw = args.embedding_hw
     separate_maps_voting = args.separate_maps_voting
     datasets_dir = args.datasets_dir
@@ -169,12 +198,40 @@ if __name__ == "__main__":
     else:
         print("Skipping populating annotation txts because --from-predictions is enabled.")
 
+    def _onnx_supports_batched_inference(path: str) -> bool:
+        model = onnx.load(path)
+        if not model.graph.input:
+            return False
+        dims = model.graph.input[0].type.tensor_type.shape.dim
+        if not dims:
+            return False
+        first_dim = dims[0]
+        return not (first_dim.HasField("dim_value") and first_dim.dim_value == 1)
+
+    def _export_onnx(dynamic: bool) -> None:
+        export_mode = "dynamic" if dynamic else "static"
+        print(f"\n===============Converting weights to {export_mode} onnx===============")
+        cmd = f"yolo export model={weights} format=onnx imgsz=640"
+        if dynamic:
+            cmd += " dynamic=True"
+        exit_code = os.system(cmd)
+        if exit_code != 0:
+            raise RuntimeError(f"ONNX export failed with exit code {exit_code}: {cmd}")
+
     onnx_path = weights.replace(".pt", ".onnx")
 
     if not os.path.exists(onnx_path):
-        print("\n===============Converting weights to onnx===============")
-        cmd = f"yolo export model={weights} format=onnx imgsz=640"
-        os.system(cmd)
+        _export_onnx(dynamic=batched_inference)
+    elif batched_inference and not _onnx_supports_batched_inference(onnx_path):
+        print(
+            "\n===============Existing onnx is fixed to batch=1; exporting dynamic onnx from .pt==============="
+        )
+        _export_onnx(dynamic=True)
+
+    if batched_inference and not _onnx_supports_batched_inference(onnx_path):
+        raise RuntimeError(
+            f"Batched inference is enabled but exported ONNX is still fixed to batch=1: {onnx_path}"
+        )
 
     print("\n===============Infering model on all available data...===============")
 
@@ -252,6 +309,9 @@ if __name__ == "__main__":
             n=-1,
             random_images=False,
             each_k_th_image=None,
+            batch_size=onnx_batch_size,
+            io_workers=io_workers,
+            save_crops=save_crops,
         )
         # Mark completion and record actual count (works for both annotation- and prediction-based bbox sources).
         actual_npy = _count_npy(embeds_dir)
@@ -265,6 +325,9 @@ if __name__ == "__main__":
                 "netron_layer_names": netron_layer_names,
                 "embedding_hw": embedding_hw,
                 "onnx_path": onnx_path,
+                "onnx_batch_size": int(onnx_batch_size),
+                "io_workers": int(io_workers),
+                "save_crops": bool(save_crops),
                 "conf": float(conf),
                 "iou_thres": 0.4,
                 "npy_files": int(actual_npy),

@@ -86,9 +86,14 @@ class YoloEmbeddingsProducer:
             h, w = embedding_tensors_hw_resolution_before_flattening
             self.EMBEDDING_TENSORS_HW_RESOLUTION_BEFORE_FLATTENING = (int(h), int(w))
         self.model = onnx.load(onnx_model_path)
-        for inp in self.model.graph.input:
-            if inp.type.tensor_type.shape.dim:
-                inp.type.tensor_type.shape.dim[0].dim_param = "batch_size"
+        self.supports_batched_inference = False
+        if self.model.graph.input:
+            dims = self.model.graph.input[0].type.tensor_type.shape.dim
+            if dims:
+                first_dim = dims[0]
+                self.supports_batched_inference = not (
+                    first_dim.HasField("dim_value") and first_dim.dim_value == 1
+                )
         self._extend_model_outputs_by_outputs_from_layers_of_interest()
         sess_options = ort.SessionOptions()
         sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
@@ -224,87 +229,94 @@ class YoloEmbeddingsProducer:
 
         return self._compute_embeddings_from_outputs(image_inference_outputs, normalized_annotations)
 
+    def _embedding_from_feature_vectors(
+        self, feature_vectors: List[torch.Tensor]
+    ) -> Union[np.ndarray, List[np.ndarray]]:
+        if self.strategy == "default":
+            flattened_tensors = [t.flatten(start_dim=1) for t in feature_vectors]
+            return torch.cat(flattened_tensors, dim=1).numpy()
+
+        if self.strategy == "separate":
+            return [t.flatten(start_dim=1).numpy() for t in feature_vectors]
+
+        if len(feature_vectors) != 3:
+            raise ValueError(
+                f"Matryoshka embedding expects exactly 3 feature maps, got {len(feature_vectors)}. "
+                f"Either pass exactly 3 `netron_layer_names` or use strategy='default'/'separate'."
+            )
+
+        sorted_feature_vectors = sorted(feature_vectors, key=lambda v: v.shape[1])
+        t_low, t_mid, t_high = sorted_feature_vectors
+
+        low_c = int(t_low.shape[1])
+        mid_c = int(t_mid.shape[1])
+        high_c = int(t_high.shape[1])
+
+        preferred_slices = max(1, int(self.matryoshka_slices))
+        slices = preferred_slices
+        if (low_c % slices) or (mid_c % slices) or (high_c % slices):
+            for cand in range(preferred_slices, 0, -1):
+                if (low_c % cand == 0) and (mid_c % cand == 0) and (high_c % cand == 0):
+                    slices = cand
+                    break
+        if (low_c % slices) or (mid_c % slices) or (high_c % slices):
+            raise ValueError(
+                "Could not find a common slice count to preserve Matryoshka prefix layout. "
+                f"Got channels low={low_c}, mid={mid_c}, high={high_c}, preferred_slices={preferred_slices}. "
+                "Tip: choose different 3 feature maps (netron layer names) or pass a smaller matryoshka_slices."
+            )
+        low_step = low_c // slices
+        mid_step = mid_c // slices
+        high_step = high_c // slices
+
+        blocks = []
+        for i in range(slices):
+            low_part = t_low[:, i * low_step : (i + 1) * low_step, :, :]
+            mid_part = t_mid[:, i * mid_step : (i + 1) * mid_step, :, :]
+            high_part = t_high[:, i * high_step : (i + 1) * high_step, :, :]
+            block = torch.cat([low_part, mid_part, high_part], dim=1)
+            blocks.append(block.flatten(start_dim=1))
+
+        return torch.cat(blocks, dim=1).numpy()
+
     def _compute_embeddings_from_outputs(
         self,
         image_inference_outputs: Dict[str, np.ndarray],
         normalized_annotations,
     ) -> Dict[Annotation, Union[np.ndarray, List[np.ndarray]]]:
-        annotation_embeddings_pairs = {}
-        for annotation in normalized_annotations:
-            feature_vectors = []
-            bbox = annotation.bbox
+        annotations = list(normalized_annotations)
+        if not annotations:
+            return {}
 
-            output_size = self.EMBEDDING_TENSORS_HW_RESOLUTION_BEFORE_FLATTENING
-            for output_tensor_name in self._layer_output_tensor_names_in_order:
-                output_array = image_inference_outputs[output_tensor_name]
-                _, c, h, w = output_array.shape
-                feature_map_box = [
-                    w * bbox.x_min,
-                    h * bbox.y_min,
-                    w * bbox.x_max,
-                    h * bbox.y_max,
-                ]
-                input_tensor = torch.from_numpy(output_array).to(torch.float32)
-                rois = torch.tensor(
-                    [0] + feature_map_box, dtype=input_tensor.dtype, device=input_tensor.device
-                ).unsqueeze(0)
-                feature_vector = roi_align(
+        output_size = self.EMBEDDING_TENSORS_HW_RESOLUTION_BEFORE_FLATTENING
+        rois_per_layer: List[torch.Tensor] = []
+        for output_tensor_name in self._layer_output_tensor_names_in_order:
+            output_array = image_inference_outputs[output_tensor_name]
+            input_tensor = torch.from_numpy(output_array).to(torch.float32)
+            _, _, h, w = output_array.shape
+            rois = torch.tensor(
+                [
+                    [0, w * ann.bbox.x_min, h * ann.bbox.y_min, w * ann.bbox.x_max, h * ann.bbox.y_max]
+                    for ann in annotations
+                ],
+                dtype=input_tensor.dtype,
+                device=input_tensor.device,
+            )
+            rois_per_layer.append(
+                roi_align(
                     input_tensor,
                     rois,
                     output_size,
                     aligned=True,
-                )
-                feature_vectors.append(feature_vector.to(torch.float32))
-            if self.strategy == "default":
-                flattened_tensors = [t.flatten(start_dim=1) for t in feature_vectors]
-                embedding_vector = torch.cat(flattened_tensors, dim=1).numpy()
-            elif self.strategy == "separate":
-                embedding_vector = [
-                    t.flatten(start_dim=1).numpy() for t in feature_vectors
-                ]
-            else:
-                if len(feature_vectors) != 3:
-                    raise ValueError(
-                        f"Matryoshka embedding expects exactly 3 feature maps, got {len(feature_vectors)}. "
-                        f"Either pass exactly 3 `netron_layer_names` or use strategy='default'/'separate'."
-                    )
+                ).to(torch.float32)
+            )
 
-                sorted_feature_vectors = sorted(feature_vectors, key=lambda v: v.shape[1])
-                t_low, t_mid, t_high = sorted_feature_vectors
-
-                low_c = int(t_low.shape[1])
-                mid_c = int(t_mid.shape[1])
-                high_c = int(t_high.shape[1])
-
-                preferred_slices = max(1, int(self.matryoshka_slices))
-                slices = preferred_slices
-                if (low_c % slices) or (mid_c % slices) or (high_c % slices):
-                    for cand in range(preferred_slices, 0, -1):
-                        if (low_c % cand == 0) and (mid_c % cand == 0) and (high_c % cand == 0):
-                            slices = cand
-                            break
-                if (low_c % slices) or (mid_c % slices) or (high_c % slices):
-                    raise ValueError(
-                        "Could not find a common slice count to preserve Matryoshka prefix layout. "
-                        f"Got channels low={low_c}, mid={mid_c}, high={high_c}, preferred_slices={preferred_slices}. "
-                        "Tip: choose different 3 feature maps (netron layer names) or pass a smaller matryoshka_slices."
-                    )
-                low_step = low_c // slices
-                mid_step = mid_c // slices
-                high_step = high_c // slices
-
-                blocks = []
-                for i in range(slices):
-                    low_part = t_low[:, i * low_step : (i + 1) * low_step, :, :]
-                    mid_part = t_mid[:, i * mid_step : (i + 1) * mid_step, :, :]
-                    high_part = t_high[:, i * high_step : (i + 1) * high_step, :, :]
-                    block = torch.cat(
-                        [low_part, mid_part, high_part], dim=1
-                    )
-                    blocks.append(block.flatten(start_dim=1))
-
-                embedding_vector = torch.cat(blocks, dim=1).numpy()
-            annotation_embeddings_pairs[annotation] = embedding_vector
+        annotation_embeddings_pairs = {}
+        for idx, annotation in enumerate(annotations):
+            feature_vectors = [layer_rois[idx : idx + 1] for layer_rois in rois_per_layer]
+            annotation_embeddings_pairs[annotation] = self._embedding_from_feature_vectors(
+                feature_vectors
+            )
 
         return annotation_embeddings_pairs
 
@@ -386,7 +398,11 @@ class YoloEmbeddingsProducer:
         random_images: bool = True,
         each_k_th_image: Optional[int] = None,
         batch_size: int = 8,
+        io_workers: int = 4,
+        save_crops: Optional[bool] = None,
     ):
+        if save_crops is not None:
+            self.save_crops = save_crops
         # inspecting if there are any files in temporal folder and whether to delete them or not
         embedding_and_crops_save_dir = Path(embedding_and_crops_save_dir)
         if not embedding_and_crops_save_dir.is_dir():
@@ -427,6 +443,7 @@ class YoloEmbeddingsProducer:
             conf_thres,
             iou_thres,
             batch_size=batch_size,
+            io_workers=io_workers,
         )
 
     def __collect_images_from_dir(
@@ -453,6 +470,7 @@ class YoloEmbeddingsProducer:
         conf_thres: float = 0.25,
         iou_thres: float = 0.7,
         batch_size: int = 8,
+        io_workers: int = 4,
     ):
         print(
             stylish_text(
@@ -462,7 +480,11 @@ class YoloEmbeddingsProducer:
         )
         print(
             stylish_text(
-                f"Batched inference (batch_size={batch_size}), threaded image loading",
+                (
+                    f"Batched inference (batch_size={batch_size}), threaded image loading"
+                    if self.supports_batched_inference
+                    else "Single-image inference (ONNX export is fixed to batch=1)"
+                ),
                 style=TextStyles.OKBLUE,
             )
         )
@@ -470,14 +492,41 @@ class YoloEmbeddingsProducer:
         def _read_image(path):
             return cv2.imread(str(path))
 
+        embedding_and_crops_save_dir.mkdir(exist_ok=True, parents=True)
+        effective_batch_size = batch_size if self.supports_batched_inference else 1
         pbar = tqdm(total=len(images))
-        with ThreadPoolExecutor(max_workers=4) as read_pool:
-            for batch_start in range(0, len(images), batch_size):
-                batch_paths = images[batch_start:batch_start + batch_size]
+        with ThreadPoolExecutor(max_workers=max(1, int(io_workers))) as read_pool:
+            for batch_start in range(0, len(images), effective_batch_size):
+                batch_paths = images[
+                    batch_start : batch_start + effective_batch_size
+                ]
 
                 orig_imgs = list(read_pool.map(_read_image, batch_paths))
                 preprocessed = preprocess(orig_imgs, self.imgsz)
-                batch_outputs = self._get_outputs_from_layers_of_interest(preprocessed)
+                try:
+                    batch_outputs = self._get_outputs_from_layers_of_interest(
+                        preprocessed
+                    )
+                except ort.RuntimeException as exc:
+                    if effective_batch_size == 1:
+                        raise
+                    if "cannot be reshaped" not in str(exc):
+                        raise
+                    print(
+                        stylish_text(
+                            "Falling back to batch_size=1 for this ONNX export",
+                            style=TextStyles.WARNING,
+                        )
+                    )
+                    self.supports_batched_inference = False
+                    return self.produce_embeddings_for_images_from_list(
+                        images,
+                        embedding_and_crops_save_dir,
+                        from_annotations_in_dir,
+                        conf_thres,
+                        iou_thres,
+                        batch_size=1,
+                    )
 
                 for idx, image_path in enumerate(batch_paths):
                     per_img_outputs = {k: v[idx:idx+1] for k, v in batch_outputs.items()}
@@ -497,7 +546,10 @@ class YoloEmbeddingsProducer:
                     for annotation, embedding in annotation_dict.items():
                         bbox = annotation.bbox
                         cropped_image_path = self._save_cropped_image(
-                            image_path, bbox, embedding_and_crops_save_dir
+                            image_path,
+                            bbox,
+                            embedding_and_crops_save_dir,
+                            image_array=orig_imgs[idx],
                         )
                         if self.strategy == "separate":
                             for i, emb in enumerate(embedding):
@@ -511,33 +563,57 @@ class YoloEmbeddingsProducer:
                     pbar.update(1)
         pbar.close()
 
-    def _save_cropped_image(
-        self, image_path: Union[str, Path], bbox_obj: Bbox, output_dir: Path
-    ) -> Path:
-        with Image.open(image_path) as img:
-            # Convert relative bbox coordinates to absolute
-            abs_bbox = bbox_obj.to_absolute((img.width, img.height)).rectangle()
-            for i in range(2):
-                if abs_bbox[i] == abs_bbox[i + 2]:
-                    if abs_bbox[i]:
-                        abs_bbox[i] -= 1
-                    else:
-                        abs_bbox[i + 2] = 1
-            cropped_img = img.crop(abs_bbox)
+    def _next_cropped_output_path(self, image_path: Union[str, Path], output_dir: Path) -> Path:
+        base_output_path = output_dir / (Path(image_path).stem + "_cropped")
+        output_path = Path(str(base_output_path) + ".jpg")
+        counter = 1
+        while self._embedding_artifact_exists(output_path):
+            output_path = base_output_path.with_name(
+                base_output_path.name + f"_{counter}.jpg"
+            )
+            counter += 1
+        return output_path
 
-            # Create a base output path without the counter
-            base_output_path = output_dir / (Path(image_path).stem + "_cropped")
-            output_path = Path(str(base_output_path) + ".jpg")
-            counter = 1
-            # Modify the output path with the counter if the file already exists
-            while output_path.is_file():
-                output_path = base_output_path.with_name(
-                    base_output_path.name + f"_{counter}.jpg"
-                )
-                counter += 1
-            if self.save_crops:
-                cropped_img.save(output_path)
-            return output_path
+    def _embedding_artifact_exists(self, output_path: Path) -> bool:
+        if output_path.is_file():
+            return True
+        sibling_paths = [
+            output_path.with_suffix(".npy"),
+            output_path.with_suffix(".txt"),
+            output_path.with_suffix(".m0.npy"),
+            output_path.with_suffix(".m1.npy"),
+            output_path.with_suffix(".m2.npy"),
+        ]
+        return any(path.exists() for path in sibling_paths)
+
+    def _save_cropped_image(
+        self,
+        image_path: Union[str, Path],
+        bbox_obj: Bbox,
+        output_dir: Path,
+        image_array: Optional[np.ndarray] = None,
+    ) -> Path:
+        output_path = self._next_cropped_output_path(image_path, output_dir)
+
+        if image_array is None:
+            with Image.open(image_path) as img:
+                image_array = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+
+        img_h, img_w = image_array.shape[:2]
+        abs_bbox = bbox_obj.to_absolute((img_w, img_h)).rectangle()
+        for i in range(2):
+            if abs_bbox[i] == abs_bbox[i + 2]:
+                if abs_bbox[i]:
+                    abs_bbox[i] -= 1
+                else:
+                    abs_bbox[i + 2] = 1
+
+        if self.save_crops:
+            x1, y1, x2, y2 = abs_bbox
+            cropped_img = image_array[y1:y2, x1:x2]
+            cv2.imwrite(str(output_path), cropped_img)
+
+        return output_path
 
 
 if __name__ == "__main__":
