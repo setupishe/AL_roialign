@@ -17,7 +17,8 @@ import numpy as np
 from pathlib import Path, PosixPath
 from typing import Union, Sequence, List, Dict, Tuple, Optional
 import torch
-from _yolov8_onnx_preprocessing import preprocess_source
+from _yolov8_onnx_preprocessing import preprocess_source, preprocess
+from concurrent.futures import ThreadPoolExecutor
 from _yolov8_onnx_postprocessing import model_inference_to_annotations, postprocess
 from utils import Annotation, TextStyles, stylish_text, Bbox, file_to_annotation
 from PIL import Image
@@ -85,13 +86,17 @@ class YoloEmbeddingsProducer:
             h, w = embedding_tensors_hw_resolution_before_flattening
             self.EMBEDDING_TENSORS_HW_RESOLUTION_BEFORE_FLATTENING = (int(h), int(w))
         self.model = onnx.load(onnx_model_path)
+        for inp in self.model.graph.input:
+            if inp.type.tensor_type.shape.dim:
+                inp.type.tensor_type.shape.dim[0].dim_param = "batch_size"
+        self._extend_model_outputs_by_outputs_from_layers_of_interest()
+        sess_options = ort.SessionOptions()
+        sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         self.session = ort.InferenceSession(
-            self.model.SerializeToString(), providers=self.providers
-        )  # use this session to modify model
-        self._extend_model_outputs_by_outputs_from_layers_of_interest()  # add outputs from layers of interest
-        self.session = ort.InferenceSession(
-            self.model.SerializeToString(), providers=self.providers
-        )  # reinitialize modified model
+            self.model.SerializeToString(),
+            sess_options=sess_options,
+            providers=self.providers,
+        )
         # Stable order of layer output tensor names corresponding to self.netron_layer_names.
         # We need this because onnx session outputs are tensor names, and their order is not guaranteed
         # to match `netron_layer_names` directly.
@@ -217,10 +222,15 @@ class YoloEmbeddingsProducer:
                     )
                 )
 
-        # ==== get feature vectors from each hidden layer of interest that correspond to found bboxes
+        return self._compute_embeddings_from_outputs(image_inference_outputs, normalized_annotations)
+
+    def _compute_embeddings_from_outputs(
+        self,
+        image_inference_outputs: Dict[str, np.ndarray],
+        normalized_annotations,
+    ) -> Dict[Annotation, Union[np.ndarray, List[np.ndarray]]]:
         annotation_embeddings_pairs = {}
         for annotation in normalized_annotations:
-            # Collect per-layer ROI-aligned feature tensors in a stable order
             feature_vectors = []
             bbox = annotation.bbox
 
@@ -234,8 +244,6 @@ class YoloEmbeddingsProducer:
                     w * bbox.x_max,
                     h * bbox.y_max,
                 ]
-                # roi_align requires `input` and `rois` to have the same dtype (and device).
-                # ONNXRuntime outputs can be float32, while a Python-list ROI tensor defaults to float64.
                 input_tensor = torch.from_numpy(output_array).to(torch.float32)
                 rois = torch.tensor(
                     [0] + feature_map_box, dtype=input_tensor.dtype, device=input_tensor.device
@@ -251,18 +259,10 @@ class YoloEmbeddingsProducer:
                 flattened_tensors = [t.flatten(start_dim=1) for t in feature_vectors]
                 embedding_vector = torch.cat(flattened_tensors, dim=1).numpy()
             elif self.strategy == "separate":
-                # Return 3 separate embeddings (one per feature map) instead of combining.
-                # Note: caller is expected to persist them separately.
                 embedding_vector = [
                     t.flatten(start_dim=1).numpy() for t in feature_vectors
                 ]
             else:
-                # Matryoshka embedding
-                # NOTE:
-                # Older versions of this code hard-validated a YOLOv8s-specific channel ratio (4:2:1).
-                # In practice, different model scales (e.g. yolov8m) can produce different channel ratios
-                # (e.g. 3:2:1 depending on `max_channels` and width scaling), so we make this path
-                # ratio-agnostic and only enforce the "prefix layout" property.
                 if len(feature_vectors) != 3:
                     raise ValueError(
                         f"Matryoshka embedding expects exactly 3 feature maps, got {len(feature_vectors)}. "
@@ -276,18 +276,8 @@ class YoloEmbeddingsProducer:
                 mid_c = int(t_mid.shape[1])
                 high_c = int(t_high.shape[1])
 
-                # IMPORTANT: We want prefix slicing on the FINAL flattened vector to correspond to
-                # prefix slicing of channels from EACH map.
-                #
-                # Build `slices` equal blocks (1/slices each). Block i contains:
-                # - channels [i/slices .. (i+1)/slices) from LOW map
-                # - channels [i/slices .. (i+1)/slices) from MID map
-                # - channels [i/slices .. (i+1)/slices) from HIGH map
-                #
-                # This way vec[:D/slices] contains 1/slices of *each* map (exactly what al_utils does).
                 preferred_slices = max(1, int(self.matryoshka_slices))
                 slices = preferred_slices
-                # If preferred_slices doesn't divide all channel counts, choose the largest divisor <= preferred_slices.
                 if (low_c % slices) or (mid_c % slices) or (high_c % slices):
                     for cand in range(preferred_slices, 0, -1):
                         if (low_c % cand == 0) and (mid_c % cand == 0) and (high_c % cand == 0):
@@ -305,14 +295,13 @@ class YoloEmbeddingsProducer:
 
                 blocks = []
                 for i in range(slices):
-                    # Slice by CHANNELS on BCHW tensors, then flatten once per block.
                     low_part = t_low[:, i * low_step : (i + 1) * low_step, :, :]
                     mid_part = t_mid[:, i * mid_step : (i + 1) * mid_step, :, :]
                     high_part = t_high[:, i * high_step : (i + 1) * high_step, :, :]
                     block = torch.cat(
                         [low_part, mid_part, high_part], dim=1
-                    )  # (1, C_block, H, W)
-                    blocks.append(block.flatten(start_dim=1))  # (1, C_block*H*W)
+                    )
+                    blocks.append(block.flatten(start_dim=1))
 
                 embedding_vector = torch.cat(blocks, dim=1).numpy()
             annotation_embeddings_pairs[annotation] = embedding_vector
@@ -326,7 +315,7 @@ class YoloEmbeddingsProducer:
         we need to modify onnx file so that hidden layers of our interest would also produce outputs
         """
         # existing outputs
-        org_outputs = [x.name for x in self.session.get_outputs()]
+        org_outputs = [x.name for x in self.model.graph.output]
 
         node_names_to_nodes = self._map_netron_layer_names_to_nodes()
 
@@ -390,12 +379,13 @@ class YoloEmbeddingsProducer:
         self,
         dir_path: Union[str, Path],
         embedding_and_crops_save_dir: Union[str, Path],
-        from_annotations_in_dir: bool = False,  # what is the source of annotations? exising markup or inference?
+        from_annotations_in_dir: bool = False,
         conf_thres: float = 0.25,
         iou_thres: float = 0.7,
-        n: int = -1,  # -1 -> all images
-        random_images: bool = True,  # matter only if n != -1
+        n: int = -1,
+        random_images: bool = True,
         each_k_th_image: Optional[int] = None,
+        batch_size: int = 8,
     ):
         # inspecting if there are any files in temporal folder and whether to delete them or not
         embedding_and_crops_save_dir = Path(embedding_and_crops_save_dir)
@@ -436,6 +426,7 @@ class YoloEmbeddingsProducer:
             from_annotations_in_dir,
             conf_thres,
             iou_thres,
+            batch_size=batch_size,
         )
 
     def __collect_images_from_dir(
@@ -458,9 +449,10 @@ class YoloEmbeddingsProducer:
         self,
         images: List[Path],
         embedding_and_crops_save_dir: Path,
-        from_annotations_in_dir: bool = False,  # this allows us to get features for bboxes defined in the .txt annotation files in dir instead of by predictions
+        from_annotations_in_dir: bool = False,
         conf_thres: float = 0.25,
         iou_thres: float = 0.7,
+        batch_size: int = 8,
     ):
         print(
             stylish_text(
@@ -470,35 +462,54 @@ class YoloEmbeddingsProducer:
         )
         print(
             stylish_text(
-                "Getting predictions, image_cuts and calculating embeddings",
+                f"Batched inference (batch_size={batch_size}), threaded image loading",
                 style=TextStyles.OKBLUE,
             )
         )
-        for image_path in tqdm(images):
-            annotation_dict = (  # get embeddings from predictions if load_annotations_from_file is False else searh for filename as image_path.name with .txt
-                self.get_image_embeddings(image_path, None, conf_thres, iou_thres)
-                if not from_annotations_in_dir
-                else self.get_image_embeddings(
-                    image_path, load_annotations_from=image_path.with_suffix(".txt")
-                )
-            )
 
-            for annotation, embedding in annotation_dict.items():
-                bbox = annotation.bbox
-                cropped_image_path = self._save_cropped_image(
-                    image_path, bbox, embedding_and_crops_save_dir
-                )
-                if self.strategy == "separate":
-                    # Save 3 embeddings separately, one per feature map.
-                    # Naming convention preserves `_cropped` prefix so downstream parsing still works.
-                    # Example: xxx_cropped.m0.npy, xxx_cropped.m1.npy, xxx_cropped.m2.npy
-                    for i, emb in enumerate(embedding):
-                        np.save(cropped_image_path.with_suffix(f".m{i}.npy"), emb)
-                else:
-                    np.save(cropped_image_path.with_suffix(".npy"), embedding)
-                Path(cropped_image_path.with_suffix(".txt")).write_text(
-                    annotation.to_yolo_annotation_line()
-                )
+        def _read_image(path):
+            return cv2.imread(str(path))
+
+        pbar = tqdm(total=len(images))
+        with ThreadPoolExecutor(max_workers=4) as read_pool:
+            for batch_start in range(0, len(images), batch_size):
+                batch_paths = images[batch_start:batch_start + batch_size]
+
+                orig_imgs = list(read_pool.map(_read_image, batch_paths))
+                preprocessed = preprocess(orig_imgs, self.imgsz)
+                batch_outputs = self._get_outputs_from_layers_of_interest(preprocessed)
+
+                for idx, image_path in enumerate(batch_paths):
+                    per_img_outputs = {k: v[idx:idx+1] for k, v in batch_outputs.items()}
+
+                    if from_annotations_in_dir:
+                        normalized_annotations = file_to_annotation(image_path.with_suffix(".txt"))
+                    else:
+                        normalized_annotations = self.norm_pred_from_inference_outputs(
+                            preprocessed[idx:idx+1], per_img_outputs,
+                            [orig_imgs[idx]], conf_thres, iou_thres,
+                        )
+
+                    annotation_dict = self._compute_embeddings_from_outputs(
+                        per_img_outputs, normalized_annotations,
+                    )
+
+                    for annotation, embedding in annotation_dict.items():
+                        bbox = annotation.bbox
+                        cropped_image_path = self._save_cropped_image(
+                            image_path, bbox, embedding_and_crops_save_dir
+                        )
+                        if self.strategy == "separate":
+                            for i, emb in enumerate(embedding):
+                                np.save(cropped_image_path.with_suffix(f".m{i}.npy"), emb)
+                        else:
+                            np.save(cropped_image_path.with_suffix(".npy"), embedding)
+                        Path(cropped_image_path.with_suffix(".txt")).write_text(
+                            annotation.to_yolo_annotation_line()
+                        )
+
+                    pbar.update(1)
+        pbar.close()
 
     def _save_cropped_image(
         self, image_path: Union[str, Path], bbox_obj: Bbox, output_dir: Path

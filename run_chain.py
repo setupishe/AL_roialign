@@ -61,44 +61,71 @@ def build_yolo_args(template: dict, ctx: dict) -> list[str]:
     return [f"{k}={expand(v, ctx)}" for k, v in template.items()]
 
 
+# YAML `prepare_args` keys → extra argv for prepare scripts (flag names = key with `_` → `-`).
+_PREPARE_BOOL_KEYS = frozenset(
+    {
+        "seg2line",
+        "cleanup",
+        "skip_pca",
+        "coarse_to_fine",
+        "from_predictions",
+        "separate_maps_voting",
+    }
+)
+_PREPARE_VALUE_KEYS = frozenset(
+    {
+        "index_backend",
+        "granularity_divs",
+        "ctf_k1_mult",
+        "ctf_k2_mult",
+        "ctf_d1_div",
+        "ctf_d2_div",
+        "netron_layer_names",
+    }
+)
+_PREPARE_KNOWN_KEYS = _PREPARE_BOOL_KEYS | _PREPARE_VALUE_KEYS | frozenset({"roi_hw"})
+_CONF_CRITERIA_PREPARE_KEYS = frozenset({"seg2line", "cleanup"})
+
+
+def _prepare_args_to_argv(prepare_args: dict) -> list[str]:
+    """Turn cfg `prepare_args` dict into CLI tokens for prepare_al_split.py (and conf_criteria subset)."""
+    argv: list[str] = []
+    for key, val in prepare_args.items():
+        if val is None or val is False:
+            continue
+        if key not in _PREPARE_KNOWN_KEYS:
+            raise ValueError(
+                f"Unknown prepare_args key '{key}'. Known: {sorted(_PREPARE_KNOWN_KEYS)}"
+            )
+        flag = "--" + key.replace("_", "-")
+        if key in _PREPARE_BOOL_KEYS:
+            if val:
+                argv.append(flag)
+        elif key == "roi_hw":
+            argv.extend([flag] + [str(x) for x in val])
+        else:
+            argv.extend([flag, str(val)])
+    return argv
+
+
 # ── experiment dir helpers ────────────────────────────────────────────────────
 
-def _yolo_save_dir_candidates(
+def _yolo_run_save_dir(
     run_name: str,
     yolo_template: dict | None,
     ctx: dict | None,
-) -> list[Path]:
-    """Paths where Ultralytics may have written the run (CWD vs global runs_dir vs explicit project)."""
+) -> Path:
+    """Where Ultralytics writes the run: project/name if project= is set, else RUNS_DIR/task/name."""
     ctx = ctx or {}
     task = str((yolo_template or {}).get("task", "detect"))
-    out: list[Path] = []
-
     if yolo_template and (raw := yolo_template.get("project")):
-        out.append(Path(expand(raw, ctx)) / run_name)
-
+        return Path(expand(raw, ctx)) / run_name
     try:
         from ultralytics.utils import RUNS_DIR
 
-        out.append(RUNS_DIR / task / run_name)
+        return RUNS_DIR / task / run_name
     except ImportError:
-        out.append(Path.home() / "ultralytics" / "runs" / task / run_name)
-
-    out.extend(
-        [
-            Path("runs") / task / run_name,
-            Path("runs") / "detect" / run_name,
-            Path("runs") / run_name,
-        ]
-    )
-    # De-dupe while preserving order
-    seen: set[str] = set()
-    unique: list[Path] = []
-    for p in out:
-        key = str(p.resolve())
-        if key not in seen:
-            seen.add(key)
-            unique.append(p)
-    return unique
+        return Path("runs") / task / run_name
 
 
 def save_config_to_exp(
@@ -108,13 +135,13 @@ def save_config_to_exp(
     ctx: dict | None = None,
 ) -> None:
     """Copy the YAML config into the YOLO experiment output directory."""
-    for candidate in _yolo_save_dir_candidates(run_name, yolo_template, ctx):
-        if candidate.exists():
-            dest = candidate / Path(config_path).name
-            shutil.copy2(config_path, dest)
-            print(f"  Config saved → {dest}")
-            return
-    print(f"  (Run dir for '{run_name}' not found — config not saved there)")
+    dest_dir = _yolo_run_save_dir(run_name, yolo_template, ctx)
+    if not dest_dir.is_dir():
+        print(f"  (Run dir not found: {dest_dir} — config not saved)")
+        return
+    dest = dest_dir / Path(config_path).name
+    shutil.copy2(config_path, dest)
+    print(f"  Config saved → {dest}")
 
 
 # ── active-learning chain ─────────────────────────────────────────────────────
@@ -132,10 +159,6 @@ def run_active_learning(cfg: dict, config_path: str) -> None:
     first_weights_template: str | None = cfg.get("first_weights_template")
     datasets_dir: str       = cfg.get("datasets_dir", "/home/setupishe/datasets")
     ultralytics_cfg_dir: str | None = cfg.get("ultralytics_cfg_dir")
-    # fromsplit_suffix: what to append to "train_{range}" for the from-split file
-    # on the first range it is always "" (= random baseline)
-    fromsplit_suffix: str   = cfg.get("fromsplit_suffix", f"_{mode}")
-    tune: bool              = cfg.get("tune", False)
     prepare_args: dict      = cfg.get("prepare_args", {})
     yolo_template: dict     = cfg.get("yolo_args", {})
     if len(ranges) < 2:
@@ -145,7 +168,7 @@ def run_active_learning(cfg: dict, config_path: str) -> None:
     print(f"Config:  {config_path}")
     print(f"Mode:    {mode}  |  Split: {split_name}")
     print(f"Dataset: {dataset_name}  |  Device: {device}")
-    print(f"Ranges:  {ranges}  |  Tune: {tune}")
+    print(f"Ranges:  {ranges}")
     print("====================================\n")
 
     for i, range_val in enumerate(ranges[:-1]):
@@ -154,19 +177,15 @@ def run_active_learning(cfg: dict, config_path: str) -> None:
         next_range_str = f"{next_range}"
         is_first      = (i == 0)
         folder_name   = "random" if is_first else mode
-        from_suffix   = "" if is_first else fromsplit_suffix
 
         ctx = {
-            "mode":             mode,
-            "DATASET_NAME":     dataset_name,
-            "dataset_name":     dataset_name,
-            "DEVICE":           str(device),
-            "device":           str(device),
-            "next_range":       next_range_str,
-            "split_name":       split_name,
-            "SPLIT_NAME":       split_name,
-            "range":            range_str,
-            "folder_name":      folder_name,
+            "mode":              mode,
+            "DATASET_NAME":      dataset_name,
+            "device":            str(device),
+            "next_range":        next_range_str,
+            "split_name":        split_name,
+            "range":             range_str,
+            "folder_name":       folder_name,
             "weights_base_path": weights_base_path,
         }
 
@@ -177,30 +196,16 @@ def run_active_learning(cfg: dict, config_path: str) -> None:
         else:
             weights_path = f"{weights_base_path}/{dataset_name}_{folder_name}_{range_val}/weights/best.pt"
 
-        from_split_candidates: list[str] = []
-        if is_first:
-            from_split_candidates.append(f"train_{range_val}.txt")
-        else:
-            if from_suffix:
-                from_split_candidates.append(f"train_{range_val}{from_suffix}.txt")
-            from_split_candidates.append(f"train_{range_val}_{split_name}.txt")
-            if split_name != mode:
-                from_split_candidates.append(f"train_{range_val}_{mode}.txt")
-            from_split_candidates.append(f"train_{range_val}.txt")
-
-        # De-dupe while preserving order.
-        from_split_candidates = list(dict.fromkeys(from_split_candidates))
         split_root = Path(datasets_dir) / dataset_name
-        existing_from_split = next(
-            (name for name in from_split_candidates if (split_root / name).exists()),
-            None,
+        from_split = (
+            f"train_{range_val}.txt"
+            if is_first
+            else f"train_{range_val}_{split_name}.txt"
         )
-        if existing_from_split is None:
+        if not (split_root / from_split).is_file():
             raise FileNotFoundError(
-                "Could not find from-split file. Tried: "
-                + ", ".join(str(split_root / x) for x in from_split_candidates)
+                f"from-split not found (expected output of the previous step): {split_root / from_split}"
             )
-        from_split = existing_from_split
 
         print(f"── PREPARE  {range_val} → {next_range_str} ──────────────────")
 
@@ -217,10 +222,8 @@ def run_active_learning(cfg: dict, config_path: str) -> None:
                 "--split-name", split_name,
                 "--bg2all-ratio", str(bg2all_ratio),
             ]
-            if prepare_args.get("seg2line"):
-                cmd.append("--seg2line")
-            if prepare_args.get("cleanup"):
-                cmd.append("--cleanup")
+            pa = {k: v for k, v in prepare_args.items() if k in _CONF_CRITERIA_PREPARE_KEYS}
+            cmd.extend(_prepare_args_to_argv(pa))
         else:
             cmd = [
                 "python3", prepare_script,
@@ -237,55 +240,12 @@ def run_active_learning(cfg: dict, config_path: str) -> None:
             ]
             if ultralytics_cfg_dir:
                 cmd.extend(["--ultralytics-cfg-dir", ultralytics_cfg_dir])
-            if prepare_args.get("seg2line"):
-                cmd.append("--seg2line")
-            if prepare_args.get("cleanup"):
-                cmd.append("--cleanup")
-            if prepare_args.get("skip_pca"):
-                cmd.append("--skip-pca")
-            if pa := prepare_args.get("index_backend"):
-                cmd.extend(["--index-backend", pa])
-            if prepare_args.get("coarse_to_fine"):
-                cmd.append("--coarse-to-fine")
-            if gd := prepare_args.get("granularity_divs"):
-                cmd.extend(["--granularity-divs", str(gd)])
-            if v := prepare_args.get("ctf_k1_mult"):
-                cmd.extend(["--ctf-k1-mult", str(v)])
-            if v := prepare_args.get("ctf_k2_mult"):
-                cmd.extend(["--ctf-k2-mult", str(v)])
-            if v := prepare_args.get("ctf_d1_div"):
-                cmd.extend(["--ctf-d1-div", str(v)])
-            if v := prepare_args.get("ctf_d2_div"):
-                cmd.extend(["--ctf-d2-div", str(v)])
-            if hw := prepare_args.get("roi_hw"):
-                cmd.extend(["--roi-hw"] + [str(x) for x in hw])
-            if nl := prepare_args.get("netron_layer_names"):
-                cmd.extend(["--netron-layer-names", nl])
+            cmd.extend(_prepare_args_to_argv(prepare_args))
 
         subprocess.run(cmd, check=True)
 
         # ── build YOLO args ───────────────────────────────────────────────────
         yolo_args = build_yolo_args(yolo_template, ctx)
-
-        if tune:
-            base_epochs       = int(yolo_template.get("epochs", 30))
-            base_lr0          = float(yolo_template.get("lr0", 0.01))
-            base_close_mosaic = int(yolo_template.get("close_mosaic", 10))
-            rel_increase = (next_range - range_val) / range_val if range_val != 0 else 0
-            new_epochs       = max(1, round(base_epochs * rel_increase))
-            new_close_mosaic = max(1, round(base_close_mosaic * rel_increase))
-            new_lr0          = 0.000004
-            print(f"  Tune: epochs={new_epochs}, lr0={new_lr0}, close_mosaic={new_close_mosaic}")
-            yolo_args = [
-                a for a in yolo_args
-                if not a.startswith(("epochs=", "lr0=", "close_mosaic=", "optimizer="))
-            ]
-            yolo_args += [
-                f"epochs={new_epochs}",
-                f"lr0={new_lr0}",
-                f"close_mosaic={new_close_mosaic}",
-                "optimizer=AdamW",
-            ]
 
         # ── train ───────────────────────────────────────────────────────────
         print(f"\n── TRAIN  {next_range_str} ──────────────────────────────────")
