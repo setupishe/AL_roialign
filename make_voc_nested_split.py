@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
-"""Build a nested VOC train list: target fraction of full train, sampled only from train_{parent}.txt.
+"""Build a nested train split for any dataset.
 
-Example (5% of full train.txt, drawn from train_0.2.txt, seed 42):
-    python3 make_voc_nested_split.py --frac 0.05 --parent-frac 0.2 --seed 42
+The target split contains `frac * full_train_count` items, sampled only from the
+parent split file.
+
+Examples:
+    python3 make_voc_nested_split.py --frac 0.05 --parent-frac 0.2
+    python3 make_voc_nested_split.py --dataset-name COCO --dataset-root /path/to/coco \\
+        --train-file train2017.txt --frac 0.2 --parent-frac 0.5
 """
 
 from __future__ import annotations
@@ -12,39 +17,102 @@ import random
 from pathlib import Path
 
 
+def frac_tag(x: float) -> str:
+    return f"{x:.4f}".rstrip("0").rstrip(".")
+
+
+def split_path(dataset_root: Path, train_file: str, frac: float) -> Path:
+    train_path = Path(train_file)
+    return dataset_root / f"{train_path.stem}_{frac_tag(frac)}{train_path.suffix}"
+
+
+def rewrite_train_entry(text: str, train_file: str, out_train_file: str) -> str:
+    for line in text.splitlines():
+        if not line.startswith("train:"):
+            continue
+
+        tail = line.split(":", 1)[1]
+        value, _, comment = tail.partition("#")
+        value = value.strip()
+        quote = value[0] if value[:1] in {"'", '"'} and value[-1:] == value[:1] else ""
+        raw_path = value[1:-1] if quote else value
+
+        if Path(raw_path).name != train_file:
+            continue
+
+        parent = Path(raw_path).parent
+        new_path = str(parent / out_train_file) if str(parent) != "." else out_train_file
+        replacement = f"train: {quote}{new_path}{quote}"
+        if comment:
+            replacement = f"{replacement} #{comment}"
+        return text.replace(line, replacement, 1)
+
+    raise SystemExit(f"expected train entry ending with '{train_file}'")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument(
-        "--voc-root",
+        "--dataset-root",
         type=Path,
         default=Path("/home/setupishe/datasets/VOC"),
-        help="VOC dataset root (contains train.txt, train_{parent}.txt)",
+        help="Dataset root that contains the full train list and nested split lists",
     )
     p.add_argument(
         "--ultralytics-datasets",
         type=Path,
         default=Path("/home/setupishe/ultralytics/ultralytics/cfg/datasets"),
-        help="Where to write VOC_{frac}.yaml",
+        help="Directory where dataset YAML files live",
+    )
+    p.add_argument(
+        "--dataset-name",
+        default="VOC",
+        help="Dataset YAML stem, e.g. VOC -> VOC.yaml, COCO -> COCO.yaml",
+    )
+    p.add_argument(
+        "--train-file",
+        default="train.txt",
+        help="Full train list filename inside dataset root, used for total count",
+    )
+    p.add_argument(
+        "--split-base-file",
+        default=None,
+        help="Base filename for parent/output split files, defaults to --train-file",
+    )
+    p.add_argument(
+        "--yaml-train-file",
+        default=None,
+        help="Train filename currently referenced by the base YAML, defaults to --train-file",
+    )
+    p.add_argument(
+        "--base-yaml",
+        default=None,
+        help="Base YAML filename to copy from, defaults to {dataset-name}.yaml",
+    )
+    p.add_argument(
+        "--voc-root",
+        dest="dataset_root",
+        type=Path,
+        help=argparse.SUPPRESS,
     )
     p.add_argument("--frac", type=float, default=0.05, help="Target fraction of full train (by count)")
     p.add_argument(
         "--parent-frac",
         type=float,
         default=0.2,
-        help="Pool file train_{parent}.txt (e.g. 0.2 for train_0.2.txt)",
+        help="Pool split fraction used to build the nested subset",
     )
     p.add_argument("--seed", type=int, default=42, help="RNG seed for sampling from parent pool")
     args = p.parse_args()
 
-    train_full = args.voc_root / "train.txt"
+    split_base_file = args.split_base_file or args.train_file
+    yaml_train_file = args.yaml_train_file or args.train_file
+    base_yaml_name = args.base_yaml or f"{args.dataset_name}.yaml"
 
-    def frac_tag(x: float) -> str:
-        return f"{x:.4f}".rstrip("0").rstrip(".")
-
+    train_full = args.dataset_root / args.train_file
     frac_s = frac_tag(args.frac)
-    parent_s = frac_tag(args.parent_frac)
-    pool_path = args.voc_root / f"train_{parent_s}.txt"
-    out_list = args.voc_root / f"train_{frac_s}.txt"
+    pool_path = split_path(args.dataset_root, split_base_file, args.parent_frac)
+    out_list = split_path(args.dataset_root, split_base_file, args.frac)
 
     random.seed(args.seed)
 
@@ -61,17 +129,17 @@ def main() -> None:
         )
 
     chosen = random.sample(pool, n_target)
-    chosen.sort(key=pool.index)
+    pool_order = {line: idx for idx, line in enumerate(pool)}
+    chosen.sort(key=pool_order.__getitem__)
 
     out_list.write_text("".join(chosen))
     print(f"wrote {out_list} ({len(chosen)} lines, {args.frac:.4f} * {n_full} ≈ {n_target})")
 
-    base_yaml = args.ultralytics_datasets / "VOC.yaml"
-    out_yaml = args.ultralytics_datasets / f"VOC_{frac_s}.yaml"
+    base_yaml = args.ultralytics_datasets / base_yaml_name
+    out_yaml = args.ultralytics_datasets / f"{args.dataset_name}_{frac_s}.yaml"
     text = base_yaml.read_text()
-    if "train: train.txt" not in text:
-        raise SystemExit(f"expected 'train: train.txt' in {base_yaml}")
-    out_yaml.write_text(text.replace("train: train.txt", f"train: train_{frac_s}.txt", 1))
+    replaced = rewrite_train_entry(text, yaml_train_file, out_list.name)
+    out_yaml.write_text(replaced)
     print(f"wrote {out_yaml}")
 
 
