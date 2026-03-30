@@ -3,12 +3,13 @@
 mode: distance
 dataset_name: VOC
 device: 0
-ranges: [0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
+ranges: [0.05, 0.075, 0.1, 0.125, 0.15, 0.175, 0.2]
 bg2all_ratio: 0
 prepare_script: prepare_al_split.py
 weights_base_path: /home/setupishe/ultralytics/runs/detect
-weights_template: "${weights_base_path}/VOC_${folder_name}_${range}_m_matryoshka_everything_really_everything/weights/best.pt"
-split_name: distance_matryoshka_everything_really_everything_m
+weights_template: "${weights_base_path}/VOC_${folder_name}_${range}_m_matryoshka_everything_really_everything_5_20/weights/best.pt"
+first_weights_template: "${weights_base_path}/VOC_random_${range}_m/weights/best.pt"
+split_name: distance_matryoshka_everything_really_everything_m_5_20
 
 prepare_args:
   seg2line: true
@@ -26,7 +27,7 @@ yolo_args:
   pretrained: "False"
   data: "VOC_${next_range}_${split_name}.yaml"
   batch: 48
-  name: "VOC_distance_${next_range}_m_matryoshka_everything_really_everything"
+  name: "VOC_distance_${next_range}_m_matryoshka_everything_really_everything_5_20"
   device: "${device}"
   epochs: 65
   matryoshka: "True"
