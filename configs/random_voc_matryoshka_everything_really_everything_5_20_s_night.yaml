@@ -1,0 +1,19 @@
+type: random_train
+fractions: [0.05, 0.075, 0.1, 0.125, 0.15, 0.175, 0.2]
+
+yolo_args:
+  data: "VOC_${fraction}.yaml"
+  model: yolov8s.pt
+  imgsz: 640
+  batch: 48
+  epochs: 65
+  pretrained: "False"
+  seed: 0
+  deterministic: "False"
+  name: "VOC_random_${fraction}_s_matryoshka_everything_really_everything_5_20"
+  matryoshka: "True"
+  matryoshka_shared_assign: "True"
+  matryoshka_bn_aux_freeze: "True"
+  matryoshka_weight_warmup: "True"
+  matryoshka_weight_warmup_start_step: 10
+  matryoshka_weight_warmup_steps: 20
