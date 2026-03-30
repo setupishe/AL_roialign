@@ -30,6 +30,7 @@ Defined in `prepare_al_split.py` (argparse). Several arguments have no `required
 | `--ctf-d2-div` | `4` | coarse-to-fine |
 | `--onnx-batch-size` | `16` | |
 | `--io-workers` | `4` | |
+| `--seed` | `42` | random seed for background sampling |
 | `--roi-hw` / `--embedding-hw` | *(none)* | two ints: **H W** (metavar order) |
 | `--datasets-dir` | `/home/setupishe/datasets` | |
 | `--ultralytics-cfg-dir` | `/home/setupishe/ultralytics/ultralytics/cfg/datasets` | |
@@ -60,7 +61,7 @@ Only these keys are accepted in `prepare_args`; anything else makes `run_chain.p
 
 **Value (becomes `--key value`):**
 
-`index_backend`, `io_workers`, `onnx_batch_size`, `granularity_divs`, `ctf_k1_mult`, `ctf_k2_mult`, `ctf_d1_div`, `ctf_d2_div`, `netron_layer_names`
+`index_backend`, `io_workers`, `onnx_batch_size`, `granularity_divs`, `ctf_k1_mult`, `ctf_k2_mult`, `ctf_d1_div`, `ctf_d2_div`, `netron_layer_names`, `seed`
 
 **Special:**
 

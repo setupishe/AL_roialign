@@ -109,6 +109,12 @@ if __name__ == "__main__":
         default=4,
         help="Number of worker threads used for image reads (default: 4).",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Random seed for background image sampling (default: 42).",
+    )
     parser.set_defaults(batched_inference=True)
 
     args = parser.parse_args()
@@ -125,6 +131,7 @@ if __name__ == "__main__":
     cleanup = args.cleanup
     seg2line = args.seg2line
     skip_pca = args.skip_pca
+    seed = args.seed
     index_backend = args.index_backend
     coarse_to_fine = args.coarse_to_fine
     granularity_divs = [int(x) for x in args.granularity_divs.split()]
@@ -143,6 +150,11 @@ if __name__ == "__main__":
     # Default bbox source is annotations (historical behavior): `from_annotations_in_dir=True`.
     # If user passes `--from-predictions`, switch to predicted bboxes.
     from_annotations_in_dir = not args.from_predictions
+    
+    # Set random seed for reproducible background sampling
+    import random
+    random.seed(seed)
+    print(f"Set random seed to {seed} for background sampling")
 
     def _done_path(folder: str) -> str:
         return os.path.join(folder, "_DONE.json")
