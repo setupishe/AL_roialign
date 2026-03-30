@@ -1,0 +1,38 @@
+# Matryoshka granularity-variance selection
+# Scores each unlabeled crop by the variance of its 1-NN cosine distance to the
+# labeled pool across multiple embedding granularity levels (D/8, D/4, D/2, D).
+# High variance = the example's proximity to the labeled pool is scale-dependent
+# (ambiguous / near a decision boundary across feature resolutions).
+mode: matryoshka_variance
+dataset_name: VOC
+device: 0
+ranges: [0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
+bg2all_ratio: 0
+prepare_script: prepare_al_split.py
+weights_base_path: /home/setupishe/ultralytics/runs/detect
+weights_template: "${weights_base_path}/VOC_${folder_name}_${range}_m_matryoshka_everything_really_everything/weights/best.pt"
+split_name: matryoshka_variance_m
+
+prepare_args:
+  seg2line: true
+  cleanup: true
+  skip_pca: true
+  index_backend: hnsw
+  roi_hw: [4, 4]
+  netron_layer_names: "/model.15/cv2/act/Mul /model.18/cv2/act/Mul /model.21/cv2/act/Mul"
+  granularity_divs: "8 4 2 1"
+
+yolo_args:
+  model: yolov8m.pt
+  pretrained: "False"
+  data: "VOC_${next_range}_${split_name}.yaml"
+  batch: 48
+  name: "VOC_matryoshka_variance_${next_range}_m"
+  device: "${device}"
+  epochs: 65
+  matryoshka: "True"
+  matryoshka_shared_assign: "true"
+  matryoshka_bn_aux_freeze: "true"
+  matryoshka_weight_warmup: "true"
+  matryoshka_weight_warmup_steps: 20
+  matryoshka_weight_warmup_start_step: 10

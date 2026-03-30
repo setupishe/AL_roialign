@@ -1,0 +1,14 @@
+# Replaces: random_train_runs.sh
+# Single-fraction VOC training with full Matryoshka (yolov8m)
+type: random_train
+fractions: [0.05, 0.075, 0.1, 0.125, 0.15, 0.175]
+
+
+yolo_args:
+  data: "VOC_${fraction}.yaml"
+  model: yolov8m.pt
+  imgsz: 640
+  batch: 48
+  epochs: 65
+  pretrained: "False"
+  name: "VOC_random_${fraction}_m"
