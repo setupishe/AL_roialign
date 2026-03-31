@@ -352,30 +352,73 @@ def _select_by_gbm_oracle(
 
 
 
-def _aggregate_scores_by_image(scored_files, k, aggregation="max"):
+def _build_class_weights_from_pool(first_list, epsilon=0.01):
+    """
+    Compute per-class inverse-frequency weights from labeled pool crop .txt files.
+    Each .txt has format: class xc yc w h [conf]
+    Returns dict: class_id -> weight (higher = rarer in pool).
+    """
+    from collections import Counter
+    class_counts = Counter()
+    for f in first_list:
+        txt = f.replace(".npy", ".txt")
+        if not os.path.exists(txt):
+            continue
+        with open(txt) as fh:
+            line = fh.readline().strip()
+            if line:
+                cls = int(line.split()[0])
+                class_counts[cls] += 1
+    total = max(1, sum(class_counts.values()))
+    weights = {cls: 1.0 / (cnt / total + epsilon) for cls, cnt in class_counts.items()}
+    default_weight = 1.0 / epsilon  # unseen classes get max weight
+    return weights, default_weight
+
+
+def _aggregate_scores_by_image(scored_files, k, aggregation="max", class_weights=None, default_class_weight=1.0):
     """
     Group per-crop scores by image and produce a ranked list of image names.
-    aggregation: "max" (legacy), "sum", "mean", "crop_weighted" (mean*sqrt(n))
+    aggregation: "max" (legacy), "sum", "mean", "crop_weighted" (mean*sqrt(n)),
+                 "class_weighted_sum" (sum weighted by inverse class frequency)
     """
     from collections import defaultdict
-    by_img = defaultdict(list)
-    for score, f in scored_files:
-        name = os.path.basename(f)
-        img_name = name[: name.index("_cropped")]
-        by_img[img_name].append(score)
 
-    if aggregation == "max":
-        img_scores = [(max(ds), img) for img, ds in by_img.items()]
-    elif aggregation == "sum":
-        img_scores = [(sum(ds), img) for img, ds in by_img.items()]
-    elif aggregation == "mean":
-        img_scores = [(np.mean(ds), img) for img, ds in by_img.items()]
-    elif aggregation == "crop_weighted":
-        img_scores = [(np.mean(ds) * np.sqrt(len(ds)), img) for img, ds in by_img.items()]
-    elif aggregation == "class_weighted_sum":
+    if aggregation == "class_weighted_sum":
+        # Need per-crop (score, file) to read class from .txt
+        by_img = defaultdict(list)
+        for score, f in scored_files:
+            name = os.path.basename(f)
+            img_name = name[: name.index("_cropped")]
+            txt = f.replace(".npy", ".txt")
+            cls_weight = default_class_weight
+            if os.path.exists(txt):
+                try:
+                    with open(txt) as fh:
+                        line = fh.readline().strip()
+                        if line:
+                            cls = int(line.split()[0])
+                            cls_weight = (class_weights or {}).get(cls, default_class_weight)
+                except Exception:
+                    pass
+            by_img[img_name].append(score * cls_weight)
         img_scores = [(sum(ds), img) for img, ds in by_img.items()]
     else:
-        raise ValueError(f"Unknown aggregation: {aggregation}")
+        by_img = defaultdict(list)
+        for score, f in scored_files:
+            name = os.path.basename(f)
+            img_name = name[: name.index("_cropped")]
+            by_img[img_name].append(score)
+
+        if aggregation == "max":
+            img_scores = [(max(ds), img) for img, ds in by_img.items()]
+        elif aggregation == "sum":
+            img_scores = [(sum(ds), img) for img, ds in by_img.items()]
+        elif aggregation == "mean":
+            img_scores = [(np.mean(ds), img) for img, ds in by_img.items()]
+        elif aggregation == "crop_weighted":
+            img_scores = [(np.mean(ds) * np.sqrt(len(ds)), img) for img, ds in by_img.items()]
+        else:
+            raise ValueError(f"Unknown aggregation: {aggregation}")
 
     img_scores.sort(key=lambda x: x[0], reverse=True)
     return [img for _, img in img_scores[:k]]
@@ -491,7 +534,12 @@ def select_embeddings(
                     break
             return res
         else:
-            return _aggregate_scores_by_image(embeds_with_scores, k, image_aggregation)
+            cw, dcw = ({}, 1.0)
+            if image_aggregation == "class_weighted_sum":
+                print("Computing class weights from labeled pool...")
+                cw, dcw = _build_class_weights_from_pool(first_list)
+                print(f"  {len(cw)} classes in pool, weight range [{min(cw.values()):.1f}, {max(cw.values()):.1f}]")
+            return _aggregate_scores_by_image(embeds_with_scores, k, image_aggregation, cw, dcw)
 
     # Coarse-to-fine pipeline
     print("Coarse-to-fine selection enabled")
@@ -566,7 +614,12 @@ def select_embeddings(
                 break
         return res
     else:
-        return _aggregate_scores_by_image(scores3, k, image_aggregation)
+        cw, dcw = ({}, 1.0)
+        if image_aggregation == "class_weighted_sum":
+            print("Computing class weights from labeled pool...")
+            cw, dcw = _build_class_weights_from_pool(first_list)
+            print(f"  {len(cw)} classes in pool, weight range [{min(cw.values()):.1f}, {max(cw.values()):.1f}]")
+        return _aggregate_scores_by_image(scores3, k, image_aggregation, cw, dcw)
 
 
 def select_embeddings_voting(

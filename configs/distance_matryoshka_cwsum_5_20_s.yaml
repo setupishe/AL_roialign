@@ -1,0 +1,37 @@
+mode: distance
+dataset_name: VOC
+device: 0
+ranges: [0.05, 0.075, 0.1, 0.125, 0.15, 0.175, 0.2]
+bg2all_ratio: 0
+prepare_script: prepare_al_split.py
+weights_base_path: /home/setupishe/ultralytics/runs/detect
+weights_template: "${weights_base_path}/VOC_distance_${range}_s_matr_cwsum_5_20/weights/best.pt"
+first_weights_template: "${weights_base_path}/VOC_distance_${range}_s_matr_cwsum_5_20/weights/best.pt"
+split_name: distance_matr_cwsum_s_5_20
+
+prepare_args:
+  seg2line: true
+  cleanup: false
+  from_predictions: true
+  skip_pca: true
+  index_backend: hnsw
+  onnx_batch_size: 16
+  io_workers: 4
+  roi_hw: [4, 4]
+  netron_layer_names: "/model.15/cv2/act/Mul /model.18/cv2/act/Mul /model.21/cv2/act/Mul"
+  image_aggregation: class_weighted_sum
+
+yolo_args:
+  model: yolov8s.pt
+  pretrained: "False"
+  data: "VOC_${next_range}_${split_name}.yaml"
+  batch: 48
+  name: "VOC_distance_${next_range}_s_matr_cwsum_5_20"
+  device: "${device}"
+  epochs: 65
+  matryoshka: "True"
+  matryoshka_shared_assign: "true"
+  matryoshka_bn_aux_freeze: "true"
+  matryoshka_weight_warmup: "true"
+  matryoshka_weight_warmup_steps: 20
+  matryoshka_weight_warmup_start_step: 10

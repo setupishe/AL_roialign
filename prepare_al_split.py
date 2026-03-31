@@ -65,7 +65,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--image-aggregation",
         default="max",
-        choices=["max", "sum", "mean", "crop_weighted"],
+        choices=["max", "sum", "mean", "crop_weighted", "class_weighted_sum"],
         help="How to aggregate per-crop distance scores into per-image scores. "
              "'max' (legacy, first-crop-wins), 'sum' (favors more detections), "
              "'mean', 'crop_weighted' (mean*sqrt(n_crops)). Default: max.",
