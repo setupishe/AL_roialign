@@ -440,6 +440,9 @@ def select_embeddings(
     exact_batch_size=2048,
     granularity_divs=None,
     image_aggregation="max",
+    from_fraction=0.0,
+    to_fraction=0.0,
+    gbm_model_path="gbm_oracle_balanced.pkl",
 ):
     if mode not in ["distance", "density", "matryoshka_variance", "gbm_oracle"]:
         raise ValueError("`mode` should be 'distance', 'density', 'matryoshka_variance', or 'gbm_oracle'")
@@ -456,7 +459,8 @@ def select_embeddings(
     if mode == "gbm_oracle":
         return _select_by_gbm_oracle(
             first_list, second_list, k=k_int,
-            from_fraction=0.0, to_fraction=0.0,  # will be overridden by caller
+            from_fraction=from_fraction, to_fraction=to_fraction,
+            gbm_model_path=gbm_model_path,
         )
 
     if mode == "matryoshka_variance":

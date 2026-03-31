@@ -554,6 +554,8 @@ if __name__ == "__main__":
                 coarse_d2_div=ctf_d2_div,
                 granularity_divs=granularity_divs,
                 image_aggregation=image_aggregation,
+                from_fraction=from_fraction,
+                to_fraction=to_fraction,
             )
         pickle_save(selected_path, selected)
 
