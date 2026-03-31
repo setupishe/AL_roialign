@@ -1,0 +1,34 @@
+{
+  "use_dims": [
+    448,
+    896,
+    1792,
+    3584
+  ],
+  "feat_names": [
+    "crop_count",
+    "from_frac",
+    "to_frac",
+    "pool_ratio",
+    "d448_max",
+    "d448_mean",
+    "d448_sum",
+    "d448_std",
+    "d896_max",
+    "d896_mean",
+    "d896_sum",
+    "d896_std",
+    "d1792_max",
+    "d1792_mean",
+    "d1792_sum",
+    "d1792_std",
+    "d3584_max",
+    "d3584_mean",
+    "d3584_sum",
+    "d3584_std",
+    "matr_var_mean",
+    "matr_var_max",
+    "matr_var_sum"
+  ],
+  "oracle": "balanced"
+}

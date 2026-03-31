@@ -275,6 +275,83 @@ def _select_by_granularity_variance(
 
 
 
+def _select_by_gbm_oracle(
+    first_list, second_list, k, from_fraction, to_fraction,
+    gbm_model_path="gbm_oracle_balanced.pkl",
+):
+    """
+    Select images using a pre-trained GBM that predicts oracle utility
+    from embedding-derived proxy features + fraction context.
+    """
+    import pickle, json
+
+    with open(gbm_model_path, "rb") as f:
+        saved = pickle.load(f)
+    model = saved["model"]
+    feat_names = saved["feat_names"]
+    use_dims = saved["use_dims"]
+
+    embedding_dim = get_embedding_dim(first_list)
+    total_train_imgs = 16551  # VOC hardcoded for now
+
+    pool_size = len(set(
+        os.path.basename(f)[:os.path.basename(f).index("_cropped")]
+        for f in first_list
+    ))
+
+    # Load all embeddings into memory
+    print(f"[GBM] Loading {len(first_list)} labeled + {len(second_list)} unlabeled embeddings...")
+    L_vecs = np.array([np.load(f).squeeze(0).astype(np.float32) for f in first_list])
+    U_vecs = np.array([np.load(f).squeeze(0).astype(np.float32) for f in second_list])
+    U_stems = [os.path.basename(f)[:os.path.basename(f).index("_cropped")] for f in second_list]
+
+    # 1-NN at each prefix dim
+    nn_dists = {}
+    for d in use_dims:
+        d = min(d, embedding_dim)
+        Ln = L_vecs[:, :d].copy()
+        Ln /= np.maximum(np.linalg.norm(Ln, axis=1, keepdims=True), 1e-12)
+        dists = np.empty(U_vecs.shape[0], dtype=np.float32)
+        for s in range(0, U_vecs.shape[0], 1000):
+            e = min(s + 1000, U_vecs.shape[0])
+            Un = U_vecs[s:e, :d].copy()
+            Un /= np.maximum(np.linalg.norm(Un, axis=1, keepdims=True), 1e-12)
+            sim = Un @ Ln.T
+            dists[s:e] = 1.0 - np.max(sim, axis=1)
+        nn_dists[d] = dists
+        print(f"[GBM]   dim={d}: mean_dist={np.mean(dists):.4f}")
+
+    # Per-image features
+    from collections import defaultdict
+    by_img = defaultdict(list)
+    for i, stem in enumerate(U_stems):
+        by_img[stem].append(i)
+
+    img_features = {}
+    for stem, idxs in by_img.items():
+        feat = [len(idxs), from_fraction, to_fraction, pool_size / total_train_imgs]
+        for d in use_dims:
+            d = min(d, embedding_dim)
+            ds = nn_dists[d][idxs]
+            feat.extend([float(np.max(ds)), float(np.mean(ds)), float(np.sum(ds)),
+                         float(np.std(ds)) if len(ds) > 1 else 0.0])
+        pcv = np.var(np.stack([nn_dists[min(d, embedding_dim)][idxs] for d in use_dims], axis=0), axis=0)
+        feat.extend([float(np.mean(pcv)), float(np.max(pcv)), float(np.sum(pcv))])
+        img_features[stem] = feat
+
+    # Predict oracle scores
+    imgs = sorted(img_features.keys())
+    X = np.array([img_features[img] for img in imgs])
+    scores = model.predict(X)
+
+    # Rank and select top-k
+    ranked = sorted(zip(scores, imgs), key=lambda x: x[0], reverse=True)
+    selected = [img for _, img in ranked[:k]]
+    print(f"[GBM] Selected {len(selected)} images (score range: {ranked[0][0]:.2f} to {ranked[-1][0]:.2f})")
+    return selected
+
+
+
 def _aggregate_scores_by_image(scored_files, k, aggregation="max"):
     """
     Group per-crop scores by image and produce a ranked list of image names.
@@ -295,6 +372,8 @@ def _aggregate_scores_by_image(scored_files, k, aggregation="max"):
         img_scores = [(np.mean(ds), img) for img, ds in by_img.items()]
     elif aggregation == "crop_weighted":
         img_scores = [(np.mean(ds) * np.sqrt(len(ds)), img) for img, ds in by_img.items()]
+    elif aggregation == "class_weighted_sum":
+        img_scores = [(sum(ds), img) for img, ds in by_img.items()]
     else:
         raise ValueError(f"Unknown aggregation: {aggregation}")
 
@@ -319,8 +398,8 @@ def select_embeddings(
     granularity_divs=None,
     image_aggregation="max",
 ):
-    if mode not in ["distance", "density", "matryoshka_variance"]:
-        raise ValueError("`mode` should be 'distance', 'density', or 'matryoshka_variance'")
+    if mode not in ["distance", "density", "matryoshka_variance", "gbm_oracle"]:
+        raise ValueError("`mode` should be 'distance', 'density', 'matryoshka_variance', or 'gbm_oracle'")
     if k is None and n is None:
         raise ValueError("either `n` of `k` should be specified")
     elif k is not None and n is not None:
@@ -330,6 +409,12 @@ def select_embeddings(
 
     total_embeddings = len(second_list)
     k_int = int(total_embeddings // n) if n is not None else int(k)
+
+    if mode == "gbm_oracle":
+        return _select_by_gbm_oracle(
+            first_list, second_list, k=k_int,
+            from_fraction=0.0, to_fraction=0.0,  # will be overridden by caller
+        )
 
     if mode == "matryoshka_variance":
         return _select_by_granularity_variance(
