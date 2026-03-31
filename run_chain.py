@@ -87,6 +87,7 @@ _PREPARE_VALUE_KEYS = frozenset(
         "netron_layer_names",
         "seed",
         "image_aggregation",
+        "use_dim",
     }
 )
 _PREPARE_KNOWN_KEYS = _PREPARE_BOOL_KEYS | _PREPARE_VALUE_KEYS | frozenset({"roi_hw"})

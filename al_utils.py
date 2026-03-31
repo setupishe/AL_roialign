@@ -443,6 +443,7 @@ def select_embeddings(
     from_fraction=0.0,
     to_fraction=0.0,
     gbm_model_path="gbm_oracle_balanced.pkl",
+    use_dim=None,
 ):
     if mode not in ["distance", "density", "matryoshka_variance", "gbm_oracle"]:
         raise ValueError("`mode` should be 'distance', 'density', 'matryoshka_variance', or 'gbm_oracle'")
@@ -469,6 +470,12 @@ def select_embeddings(
         )
 
     embedding_dim = get_embedding_dim(first_list)
+    # Allow using a shorter matryoshka prefix for distance computation
+    if use_dim is not None:
+        use_dim = max(1, min(int(use_dim), embedding_dim))
+        print(f"[select_embeddings] Using prefix dim={use_dim}/{embedding_dim} for distance computation")
+    else:
+        use_dim = embedding_dim
     # Density uses k-NN (intended: 5-NN); distance uses 1-NN
     nn_k = 5 if mode == "density" else 1
     nn_k = min(nn_k, max(1, len(first_list)))
@@ -495,11 +502,11 @@ def select_embeddings(
     if not coarse_to_fine:
         if backend == "annoy":
             print("Building Annoy index from the first list...")
-            index = build_annoy_index(first_list, embedding_dim, n_trees=10)
+            index = build_annoy_index(first_list, use_dim, n_trees=10)
             print("Annoy index built.")
         else:
             print("Building HNSW index from the first list...")
-            index = build_hnsw_index(first_list, embedding_dim)
+            index = build_hnsw_index(first_list, embedding_dim, use_dim=use_dim)
             print("HNSW index built.")
 
         if mode == "distance":
@@ -513,7 +520,7 @@ def select_embeddings(
         if backend == "annoy":
             for file in tqdm(second_list):
                 emb = np.load(file).squeeze(0).astype(np.float32)
-                emb = _slice_vector(emb, embedding_dim)
+                emb = _slice_vector(emb, use_dim)
                 _, distances = index.get_nns_by_vector(
                     emb, nn_k, include_distances=True
                 )
@@ -521,7 +528,7 @@ def select_embeddings(
                 embeds_with_scores.append((score, file))
         else:
             embeds_with_scores = _score_files_hnsw(
-                index, second_list, embedding_dim, nn_k, hnsw_batch_size
+                index, second_list, use_dim, nn_k, hnsw_batch_size
             )
         if image_aggregation == "max":
             sorted_embeds = sorted(embeds_with_scores, key=lambda x: x[0], reverse=reverse)

@@ -118,6 +118,12 @@ if __name__ == "__main__":
         help="Number of worker threads used for image reads (default: 4).",
     )
     parser.add_argument(
+        "--use-dim",
+        type=int,
+        default=None,
+        help="Use only first N dims of embedding for distance computation (matryoshka prefix). Default: full dim.",
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=42,
@@ -156,6 +162,7 @@ if __name__ == "__main__":
     separate_maps_voting = args.separate_maps_voting
     datasets_dir = args.datasets_dir
     ultralytics_cfg_dir = args.ultralytics_cfg_dir
+    use_dim = args.use_dim
     # Default bbox source is annotations (historical behavior): `from_annotations_in_dir=True`.
     # If user passes `--from-predictions`, switch to predicted bboxes.
     from_annotations_in_dir = not args.from_predictions
@@ -566,6 +573,7 @@ if __name__ == "__main__":
                 image_aggregation=image_aggregation,
                 from_fraction=from_fraction,
                 to_fraction=to_fraction,
+                use_dim=use_dim,
             )
         pickle_save(selected_path, selected)
 
