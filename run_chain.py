@@ -86,6 +86,7 @@ _PREPARE_VALUE_KEYS = frozenset(
         "ctf_d2_div",
         "netron_layer_names",
         "seed",
+        "image_aggregation",
     }
 )
 _PREPARE_KNOWN_KEYS = _PREPARE_BOOL_KEYS | _PREPARE_VALUE_KEYS | frozenset({"roi_hw"})

@@ -63,6 +63,14 @@ if __name__ == "__main__":
              "Each value d produces prefix dim = embedding_dim // d (default: '8 4 2 1').",
     )
     parser.add_argument(
+        "--image-aggregation",
+        default="max",
+        choices=["max", "sum", "mean", "crop_weighted"],
+        help="How to aggregate per-crop distance scores into per-image scores. "
+             "'max' (legacy, first-crop-wins), 'sum' (favors more detections), "
+             "'mean', 'crop_weighted' (mean*sqrt(n_crops)). Default: max.",
+    )
+    parser.add_argument(
         "--ctf-k1-mult",
         type=float,
         default=4.0,
@@ -135,6 +143,7 @@ if __name__ == "__main__":
     index_backend = args.index_backend
     coarse_to_fine = args.coarse_to_fine
     granularity_divs = [int(x) for x in args.granularity_divs.split()]
+    image_aggregation = args.image_aggregation
     ctf_k1_mult = args.ctf_k1_mult
     ctf_k2_mult = args.ctf_k2_mult
     ctf_d1_div = args.ctf_d1_div
@@ -528,6 +537,7 @@ if __name__ == "__main__":
                 coarse_k2_mult=ctf_k2_mult,
                 coarse_d1_div=ctf_d1_div,
                 coarse_d2_div=ctf_d2_div,
+                image_aggregation=image_aggregation,
             )
         else:
             first_list, second_list = filelists
@@ -543,6 +553,7 @@ if __name__ == "__main__":
                 coarse_d1_div=ctf_d1_div,
                 coarse_d2_div=ctf_d2_div,
                 granularity_divs=granularity_divs,
+                image_aggregation=image_aggregation,
             )
         pickle_save(selected_path, selected)
 

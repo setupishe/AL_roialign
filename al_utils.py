@@ -274,6 +274,34 @@ def _select_by_granularity_variance(
     return res
 
 
+
+def _aggregate_scores_by_image(scored_files, k, aggregation="max"):
+    """
+    Group per-crop scores by image and produce a ranked list of image names.
+    aggregation: "max" (legacy), "sum", "mean", "crop_weighted" (mean*sqrt(n))
+    """
+    from collections import defaultdict
+    by_img = defaultdict(list)
+    for score, f in scored_files:
+        name = os.path.basename(f)
+        img_name = name[: name.index("_cropped")]
+        by_img[img_name].append(score)
+
+    if aggregation == "max":
+        img_scores = [(max(ds), img) for img, ds in by_img.items()]
+    elif aggregation == "sum":
+        img_scores = [(sum(ds), img) for img, ds in by_img.items()]
+    elif aggregation == "mean":
+        img_scores = [(np.mean(ds), img) for img, ds in by_img.items()]
+    elif aggregation == "crop_weighted":
+        img_scores = [(np.mean(ds) * np.sqrt(len(ds)), img) for img, ds in by_img.items()]
+    else:
+        raise ValueError(f"Unknown aggregation: {aggregation}")
+
+    img_scores.sort(key=lambda x: x[0], reverse=True)
+    return [img for _, img in img_scores[:k]]
+
+
 def select_embeddings(
     first_list,
     second_list,
@@ -289,6 +317,7 @@ def select_embeddings(
     hnsw_batch_size=1024,
     exact_batch_size=2048,
     granularity_divs=None,
+    image_aggregation="max",
 ):
     if mode not in ["distance", "density", "matryoshka_variance"]:
         raise ValueError("`mode` should be 'distance', 'density', or 'matryoshka_variance'")
@@ -362,20 +391,22 @@ def select_embeddings(
             embeds_with_scores = _score_files_hnsw(
                 index, second_list, embedding_dim, nn_k, hnsw_batch_size
             )
-        sorted_embeds = sorted(embeds_with_scores, key=lambda x: x[0], reverse=reverse)
-        # Deduplicate by image and collect final list of image names (preserve ranked order)
-        res = []
-        seen = set()
-        for score, f in sorted_embeds:
-            name = os.path.basename(f)
-            img_name = name[: name.index("_cropped")]
-            if img_name in seen:
-                continue
-            seen.add(img_name)
-            res.append(img_name)
-            if len(res) >= k:
-                break
-        return res
+        if image_aggregation == "max":
+            sorted_embeds = sorted(embeds_with_scores, key=lambda x: x[0], reverse=reverse)
+            res = []
+            seen = set()
+            for score, f in sorted_embeds:
+                name = os.path.basename(f)
+                img_name = name[: name.index("_cropped")]
+                if img_name in seen:
+                    continue
+                seen.add(img_name)
+                res.append(img_name)
+                if len(res) >= k:
+                    break
+            return res
+        else:
+            return _aggregate_scores_by_image(embeds_with_scores, k, image_aggregation)
 
     # Coarse-to-fine pipeline
     print("Coarse-to-fine selection enabled")
@@ -435,21 +466,22 @@ def select_embeddings(
         for i, file in enumerate(batch_files):
             score = _score_from_distances(distances[i].tolist(), mode)
             scores3.append((score, file))
-    stage3_sorted = sorted(scores3, key=lambda x: x[0], reverse=reverse)
-
-    # Produce final list of image names
-    res = []
-    seen = set()
-    for score, f in stage3_sorted:
-        name = os.path.basename(f)
-        img_name = name[: name.index("_cropped")]
-        if img_name in seen:
-            continue
-        seen.add(img_name)
-        res.append(img_name)
-        if len(res) >= k:
-            break
-    return res
+    if image_aggregation == "max":
+        stage3_sorted = sorted(scores3, key=lambda x: x[0], reverse=reverse)
+        res = []
+        seen = set()
+        for score, f in stage3_sorted:
+            name = os.path.basename(f)
+            img_name = name[: name.index("_cropped")]
+            if img_name in seen:
+                continue
+            seen.add(img_name)
+            res.append(img_name)
+            if len(res) >= k:
+                break
+        return res
+    else:
+        return _aggregate_scores_by_image(scores3, k, image_aggregation)
 
 
 def select_embeddings_voting(
@@ -465,6 +497,7 @@ def select_embeddings_voting(
     coarse_d2_div=4,
     hnsw_batch_size=1024,
     exact_batch_size=2048,
+    image_aggregation="max",
 ):
     """
     Run selection separately for multiple embedding spaces (e.g. 3 feature maps),
