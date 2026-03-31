@@ -161,6 +161,15 @@ def run_active_learning(cfg: dict, config_path: str) -> None:
     mode: str               = cfg["mode"]
     dataset_name: str       = cfg["dataset_name"]
     device                  = cfg.get("device", 0)
+    if isinstance(device, list):
+        prepare_device = str(device[0])
+        yolo_device    = ",".join(str(d) for d in device)
+    elif isinstance(device, str) and "," in device:
+        prepare_device = device.split(",")[0].strip()
+        yolo_device    = device
+    else:
+        prepare_device = str(device)
+        yolo_device    = str(device)
     split_name: str         = cfg.get("split_name", mode)
     bg2all_ratio            = cfg.get("bg2all_ratio", 0)
     prepare_script: str     = cfg.get("prepare_script", "prepare_al_split.py")
@@ -177,7 +186,7 @@ def run_active_learning(cfg: dict, config_path: str) -> None:
     print("=== Active Learning Chain Runner ===")
     print(f"Config:  {config_path}")
     print(f"Mode:    {mode}  |  Split: {split_name}")
-    print(f"Dataset: {dataset_name}  |  Device: {device}")
+    print(f"Dataset: {dataset_name}  |  Device (YOLO): {yolo_device}  |  Device (prepare): {prepare_device}")
     print(f"Ranges:  {ranges}")
     print("====================================\n")
 
@@ -191,7 +200,7 @@ def run_active_learning(cfg: dict, config_path: str) -> None:
         ctx = {
             "mode":              mode,
             "DATASET_NAME":      dataset_name,
-            "device":            str(device),
+            "device":            yolo_device,
             "next_range":        next_range_str,
             "split_name":        split_name,
             "range":             range_str,
@@ -245,7 +254,7 @@ def run_active_learning(cfg: dict, config_path: str) -> None:
                 "--split-name", split_name,
                 "--mode", mode,
                 "--bg2all-ratio", str(bg2all_ratio),
-                "--device", str(device),
+                "--device", prepare_device,
                 "--datasets-dir", datasets_dir,
             ]
             if ultralytics_cfg_dir:
