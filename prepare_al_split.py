@@ -185,13 +185,23 @@ if __name__ == "__main__":
     import time
 
     def check_busy():
-        while len((embeds_names := glob.glob(f"{datasets_dir}/*embeds*"))) > 0:
-            if any([split_name in x for x in embeds_names]):
+        while True:
+            embeds_names = glob.glob(f"{datasets_dir}/*embeds*")
+            if not embeds_names:
                 break
-            else:
-                print(embeds_names)
-                print("waiting 1 more minute, someone else is active learning too...")
-                time.sleep(60)
+            # Own split — always fine
+            if any(split_name in x for x in embeds_names):
+                break
+            # Foreign dirs: only block if actively being written (no _DONE.json)
+            active_foreign = [
+                x for x in embeds_names
+                if not os.path.exists(os.path.join(x, "_DONE.json"))
+            ]
+            if not active_foreign:
+                break
+            print(active_foreign)
+            print("waiting 1 more minute, someone else is active learning too...")
+            time.sleep(60)
 
     check_busy()
 
