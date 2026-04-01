@@ -88,6 +88,7 @@ _PREPARE_VALUE_KEYS = frozenset(
         "seed",
         "image_aggregation",
         "use_dim",
+        "train_subdir",
     }
 )
 _PREPARE_KNOWN_KEYS = _PREPARE_BOOL_KEYS | _PREPARE_VALUE_KEYS | frozenset({"roi_hw"})

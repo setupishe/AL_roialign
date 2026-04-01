@@ -30,6 +30,7 @@ prepare_args:
   roi_hw: [4, 4]
   netron_layer_names: "/model.15/cv2/act/Mul /model.18/cv2/act/Mul /model.21/cv2/act/Mul"
   from_predictions: true
+  train_subdir: train2017
 
 yolo_args:
   model: yolov8m.pt

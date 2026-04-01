@@ -129,6 +129,11 @@ if __name__ == "__main__":
         default=42,
         help="Random seed for background image sampling (default: 42).",
     )
+    parser.add_argument(
+        "--train-subdir",
+        default="train",
+        help="Name of the training image/label subdirectory (default: 'train'). Use 'train2017' for COCO.",
+    )
     parser.set_defaults(batched_inference=True)
 
     args = parser.parse_args()
@@ -163,6 +168,7 @@ if __name__ == "__main__":
     datasets_dir = args.datasets_dir
     ultralytics_cfg_dir = args.ultralytics_cfg_dir
     use_dim = args.use_dim
+    train_subdir = args.train_subdir
     # Default bbox source is annotations (historical behavior): `from_annotations_in_dir=True`.
     # If user passes `--from-predictions`, switch to predicted bboxes.
     from_annotations_in_dir = not args.from_predictions
@@ -219,7 +225,7 @@ if __name__ == "__main__":
         "\n===============Populating image dir with corresponding formatted anno files...==============="
     )
 
-    original_dataset = f"{datasets_dir}/{dataset_name}/images/train/"
+    original_dataset = f"{datasets_dir}/{dataset_name}/images/{train_subdir}/"
     filelist = glob.glob(f"{original_dataset}*jpg")
     if from_annotations_in_dir:
         if len(filelist) == len(glob.glob(f"{original_dataset}*txt")):
@@ -585,7 +591,7 @@ if __name__ == "__main__":
     free_bgs = []
     for file in tqdm(
         glob.glob(
-            f"{datasets_dir}/{dataset_name}/labels/train/*txt", recursive=True
+            f"{datasets_dir}/{dataset_name}/labels/{train_subdir}/*txt", recursive=True
         )
     ):
         name = os.path.basename(file)
@@ -601,7 +607,7 @@ if __name__ == "__main__":
     )
 
     with open(res_path, "w") as f:
-        f.writelines([f"./images/train/{x}\n" for x in from_names + not_bgs + bgs])
+        f.writelines([f"./images/{train_subdir}/{x}\n" for x in from_names + not_bgs + bgs])
 
     print(f"`{res_path}` saved successfully.")
 
