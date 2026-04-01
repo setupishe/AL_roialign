@@ -10,3 +10,4 @@
 !configs/*.yaml
 *src
 .cursor/rules/
+*.pkl
