@@ -617,11 +617,12 @@ if __name__ == "__main__":
     ) as from_file:
         lines = from_file.readlines()
 
+    new_train = f"train_{to_fraction}_{split_name}.txt"
     for i, line in enumerate(lines):
         if "train: train.txt" in line:
-            lines[i] = lines[i].replace(
-                "train.txt", f"train_{to_fraction}_{split_name}.txt"
-            )
+            lines[i] = line.replace("train.txt", new_train, 1)
+        elif "train: train2017.txt" in line:
+            lines[i] = line.replace("train2017.txt", new_train, 1)
     with open(
         yaml_path,
         "w",
