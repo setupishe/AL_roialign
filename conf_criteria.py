@@ -76,7 +76,10 @@ with open(inference_filepath, "w") as f:
 inference_name = "inference_results"
 preds_folder = f"/home/setupishe/ultralytics/runs/detect/{inference_name}/labels"
 
-cmd = f"yolo predict model={weights} source='{inference_filepath}' conf={conf} iou={iou_threshold} name={inference_name} save=False save_conf=True save_txt=True batch=64"
+cmd = (
+    f"yolo predict model={weights} source='{inference_filepath}' conf={conf} iou={iou_threshold} "
+    f"name={inference_name} save=False save_conf=True save_txt=True batch=64 verbose=False"
+)
 
 
 def prettyprint(msg):

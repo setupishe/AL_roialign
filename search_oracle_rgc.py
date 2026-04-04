@@ -1,28 +1,16 @@
-"""RGC Oracle Image Selection — VOC / COCO active learning.
+"""RGC Oracle Image Selection — library for VOC / COCO active learning.
 
-Candidates:
-  miss_score   ChatGPT model-failure-aware oracle. Requires --weights.
+Primary entry: ``run_rgc_al_prepare`` (called from ``prepare_al_split.py`` when
+``--mode rgc``), orchestrated by ``run_chain.py``.
+
+Candidates (for reference / reuse):
+  miss_score   Model-failure-aware oracle (used by ``run_rgc_al_prepare``).
                Score = sum_c  w_c * log(1 + sum_{j in class c} m_j)
                where w_c = 1/sqrt(N_c_labeled + 1) and
                m_j = fraction of IoU thresholds {0.50..0.95} that the best
                matching prediction misses for GT object j.
-  balanced_v1  Simple GT-only heuristic (kept for comparison).
-
-Usage:
-  # Dry run — print stats for both candidates
-  python search_oracle_rgc.py \\
-    --weights /path/to/VOC_random_0.2_s/weights/best.pt \\
-    --candidates miss_score balanced_v1
-
-  # Write winning split + dataset YAML
-  python search_oracle_rgc.py \\
-    --weights /path/to/best.pt \\
-    --write-candidate miss_score \\
-    --output-split /path/to/datasets/VOC/train_0.3_oracle_miss_score_s.txt \\
-    --template-yaml /path/to/ultralytics/cfg/datasets/VOC.yaml \\
-    --output-yaml /path/to/ultralytics/cfg/datasets/VOC_0.3_oracle_miss_score_s.yaml
+  balanced_v1  Simple GT-only heuristic (comparison only; not wired in prepare).
 """
-import argparse
 import math
 import os
 from collections import Counter
@@ -143,7 +131,7 @@ def _box_iou_xyxy(a, b):
 # ---------------------------------------------------------------------------
 
 def score_miss_score(unlabeled_imgs, gt_db, from_names, weights_path,
-                     dataset_dir, train_subdir, batch_size=16):
+                     dataset_dir, train_subdir, batch_size=16, device=None):
     """Model-failure-aware oracle scoring.
 
     S(x) = sum_c  w_c * log(1 + sum_{j in class c} m_j)
@@ -170,10 +158,14 @@ def score_miss_score(unlabeled_imgs, gt_db, from_names, weights_path,
 
     # preds[img] = {cls_id: np.array of shape (M, 4) in normalized xyxy}
     preds = {}
+    pred_kw = {"verbose": False}
+    if device is not None and str(device).strip() != "":
+        pred_kw["device"] = device
+
     for i in range(0, len(unlabeled_imgs), batch_size):
         batch_names = unlabeled_imgs[i:i + batch_size]
         batch_paths = [os.path.join(images_dir, n) for n in batch_names]
-        results = model.predict(batch_paths, verbose=False)
+        results = model.predict(batch_paths, **pred_kw)
         for name, result in zip(batch_names, results):
             cls_boxes = {}
             if result.boxes is not None and len(result.boxes):
@@ -315,92 +307,120 @@ def write_yaml_from_template(template_yaml, output_yaml, new_train_name):
 
 
 # ---------------------------------------------------------------------------
-# Main
+# prepare_al_split integration (mode=rgc)
 # ---------------------------------------------------------------------------
 
-def main():
-    parser = argparse.ArgumentParser(description="RGC Oracle Image Selection")
-    parser.add_argument("--dataset-dir", default="/home/setupishe/datasets/VOC")
-    parser.add_argument("--train-subdir", default="train")
-    parser.add_argument("--from-split",
-                        default="/home/setupishe/datasets/VOC/train_0.2.txt")
-    parser.add_argument("--baseline-to-split",
-                        default="/home/setupishe/datasets/VOC/train_0.3.txt")
-    parser.add_argument("--weights", default=None,
-                        help="YOLO checkpoint for miss_score inference")
-    parser.add_argument("--batch-size", type=int, default=16,
-                        help="Inference batch size for miss_score")
-    parser.add_argument("--candidates", nargs="+",
-                        default=["miss_score", "balanced_v1"])
-    parser.add_argument("--write-candidate", default=None)
-    parser.add_argument("--output-split", default=None)
-    parser.add_argument("--template-yaml",
-                        default="/home/setupishe/ultralytics/ultralytics/cfg/datasets/VOC.yaml")
-    parser.add_argument("--output-yaml", default=None)
-    args = parser.parse_args()
 
-    gt_db = build_gt_database(args.dataset_dir, args.train_subdir)
-    from_names = load_split(args.from_split)
-    baseline_names = load_split(args.baseline_to_split)
+def run_rgc_al_prepare(
+    *,
+    dataset_dir: str,
+    train_subdir: str,
+    from_split_relpath: str,
+    to_fraction: float,
+    split_name: str,
+    weights_path: str,
+    ultralytics_cfg_dir: str,
+    dataset_name: str,
+    template_yaml: str | None = None,
+    infer_batch_size: int = 16,
+    baseline_split_rel: str | None = None,
+    yolo_device=None,
+) -> None:
+    """RGC miss_score oracle — same outputs as embedding AL: train split + Ultralytics yaml.
+
+    Selects exactly k = |train_{{to}} \\ from_split| images so the labeled set size
+    matches the standard random train_{{to}}.txt budget.
+    """
+    to_key = str(to_fraction)
+
+    if template_yaml is None:
+        template_yaml = os.path.join(ultralytics_cfg_dir, f"{dataset_name}.yaml")
+    baseline_split_rel = baseline_split_rel or f"train_{to_key}.txt"
+
+    from_split_path = os.path.join(dataset_dir, from_split_relpath)
+    baseline_path = os.path.join(dataset_dir, baseline_split_rel)
+
+    for label, p in (
+        ("from_split", from_split_path),
+        ("baseline", baseline_path),
+        ("template_yaml", template_yaml),
+    ):
+        if not os.path.isfile(p):
+            raise FileNotFoundError(f"RGC prepare: missing {label}: {p}")
+    if not os.path.isfile(weights_path):
+        raise FileNotFoundError(f"RGC prepare: weights not found: {weights_path}")
+
+    gt_db = build_gt_database(dataset_dir, train_subdir)
+    from_names = load_split(from_split_path)
+    baseline_names = load_split(baseline_path)
     from_set = set(from_names)
     baseline_added = [n for n in baseline_names if n not in from_set]
-    unlabeled_imgs = sorted(n for n in gt_db if n not in from_set)
+    if len(set(baseline_added)) != len(baseline_added):
+        raise ValueError(
+            "RGC prepare: duplicate image names in baseline split (vs from_split); "
+            "fix train_{to} list before running oracle."
+        )
     k = len(baseline_added)
+    unlabeled_imgs = sorted(n for n in gt_db if n not in from_set)
+    unlabeled_set = set(unlabeled_imgs)
+
+    if k < 1:
+        raise ValueError(
+            "RGC prepare: budget k=0 (baseline adds no images vs from_split). "
+            "Check from_split / baseline split paths."
+        )
+    if k > len(unlabeled_set):
+        raise ValueError(
+            f"RGC prepare: k={k} exceeds unlabeled pool {len(unlabeled_set)} "
+            "(duplicate lines in baseline split or inconsistent splits)."
+        )
+    missing = [n for n in baseline_added if n not in unlabeled_set]
+    if missing:
+        raise ValueError(
+            f"RGC prepare: {len(missing)} baseline image(s) not in on-disk train pool "
+            f"(first few): {missing[:8]}"
+        )
 
     print("=" * 80)
-    print("VOC ORACLE RGC SEARCH")
+    print("RGC prepare_al_split — miss_score oracle")
     print("=" * 80)
-    print(f"Dataset images  : {len(gt_db)}")
-    print(f"From split      : {len(from_names)}")
-    print(f"Baseline to split: {len(baseline_names)}")
-    print(f"Budget k        : {k}")
-    print(f"Unlabeled pool  : {len(unlabeled_imgs)}")
+    print(f"Dataset dir     : {dataset_dir}")
+    print(f"Train subdir    : {train_subdir}")
+    print(f"Labeled split   : {from_split_path} ({len(from_names)} images)")
+    print(f"Baseline split  : {baseline_path} (k = {k} new images vs labeled)")
+    print(f"Unlabeled pool  : {len(unlabeled_imgs)} images")
+    print(f"Weights         : {weights_path}")
+    print("=" * 80)
+
+    scores = score_miss_score(
+        unlabeled_imgs,
+        gt_db,
+        from_names,
+        weights_path,
+        dataset_dir,
+        train_subdir,
+        batch_size=infer_batch_size,
+        device=yolo_device,
+    )
+    selected = select_top_k(scores, k)
 
     baseline_summary = summarize_selection(baseline_added, gt_db)
-    print_summary("baseline", baseline_summary)
+    sel_summary = summarize_selection(selected, gt_db)
+    overlap = len(set(selected) & set(baseline_added))
+    print_summary("baseline_random", baseline_summary)
+    print_summary("rgc_miss_score", sel_summary, overlap=overlap)
 
-    pool_stats = compute_pool_stats(from_names, gt_db)
-    features_by_img = build_feature_table(unlabeled_imgs, gt_db, pool_stats)
+    out_txt = os.path.join(dataset_dir, f"train_{to_key}_{split_name}.txt")
+    out_yaml = os.path.join(
+        ultralytics_cfg_dir,
+        f"{dataset_name}_{to_key}_{split_name}.yaml",
+    )
 
-    selections = {}
-    print("-" * 80)
-    for candidate in args.candidates:
-        print(f"Scoring: {candidate} ...")
-        if candidate == "miss_score":
-            if not args.weights:
-                raise ValueError("--weights is required for miss_score")
-            scores = score_miss_score(
-                unlabeled_imgs, gt_db, from_names,
-                args.weights, args.dataset_dir, args.train_subdir,
-                batch_size=args.batch_size,
-            )
-        elif candidate == "balanced_v1":
-            scores = score_balanced_v1(features_by_img)
-        else:
-            raise ValueError(f"Unknown candidate: {candidate!r}")
-
-        selected = select_top_k(scores, k)
-        selections[candidate] = selected
-        summary = summarize_selection(selected, gt_db)
-        overlap = len(set(selected) & set(baseline_added))
-        print_summary(candidate, summary, overlap=overlap)
-
-    if args.write_candidate:
-        if args.write_candidate not in selections:
-            raise ValueError(f"{args.write_candidate!r} was not scored")
-        if not args.output_split:
-            raise ValueError("--output-split required with --write-candidate")
-        selected = selections[args.write_candidate]
-        write_split(args.output_split, from_names, selected, args.train_subdir)
-        print(f"Saved split: {args.output_split}")
-        if args.output_yaml:
-            write_yaml_from_template(
-                args.template_yaml,
-                args.output_yaml,
-                os.path.basename(args.output_split),
-            )
-            print(f"Saved yaml: {args.output_yaml}")
-
-
-if __name__ == "__main__":
-    main()
+    write_split(out_txt, from_names, selected, train_subdir)
+    print(f"Saved split: {out_txt}")
+    write_yaml_from_template(
+        template_yaml,
+        out_yaml,
+        os.path.basename(out_txt),
+    )
+    print(f"Saved yaml: {out_yaml}")

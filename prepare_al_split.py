@@ -17,7 +17,12 @@ if __name__ == "__main__":
     parser.add_argument("--split-name")
     parser.add_argument("--dataset-name")
     parser.add_argument("--bg2all-ratio")
-    parser.add_argument("--mode", default="distance")
+    parser.add_argument(
+        "--mode",
+        default="distance",
+        help="Embedding AL strategy: distance / density / ...  "
+        "Use 'rgc' for miss_score oracle (no embeddings; uses search_oracle_rgc).",
+    )
     parser.add_argument("--cleanup", action="store_true")  # on/off flag
     parser.add_argument("--seg2line", action="store_true")  # on/off flag
     parser.add_argument("--skip-pca", action="store_true")  # on/off flag
@@ -134,6 +139,20 @@ if __name__ == "__main__":
         default="train",
         help="Name of the training image/label subdirectory (default: 'train'). Use 'train2017' for COCO.",
     )
+    parser.add_argument(
+        "--rgc-batch-size",
+        type=int,
+        default=16,
+        help="YOLO predict batch size for mode=rgc (miss_score) only.",
+    )
+    parser.add_argument(
+        "--rgc-baseline-split",
+        default=None,
+        help=(
+            "For mode=rgc: baseline split file under dataset dir "
+            "(default: train_{to_fraction}.txt). Used only to set selection budget k."
+        ),
+    )
     parser.set_defaults(batched_inference=True)
 
     args = parser.parse_args()
@@ -172,6 +191,24 @@ if __name__ == "__main__":
     # Default bbox source is annotations (historical behavior): `from_annotations_in_dir=True`.
     # If user passes `--from-predictions`, switch to predicted bboxes.
     from_annotations_in_dir = not args.from_predictions
+
+    if str(mode).lower() == "rgc":
+        from search_oracle_rgc import run_rgc_al_prepare
+
+        run_rgc_al_prepare(
+            dataset_dir=os.path.join(datasets_dir, dataset_name),
+            train_subdir=train_subdir,
+            from_split_relpath=from_split,
+            to_fraction=to_fraction,
+            split_name=split_name,
+            weights_path=weights,
+            ultralytics_cfg_dir=ultralytics_cfg_dir,
+            dataset_name=dataset_name,
+            infer_batch_size=int(args.rgc_batch_size),
+            baseline_split_rel=args.rgc_baseline_split,
+            yolo_device=device,
+        )
+        raise SystemExit(0)
     
     # Set random seed for reproducible background sampling
     import random

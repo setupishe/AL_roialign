@@ -89,6 +89,8 @@ _PREPARE_VALUE_KEYS = frozenset(
         "image_aggregation",
         "use_dim",
         "train_subdir",
+        "rgc_batch_size",
+        "rgc_baseline_split",
     }
 )
 _PREPARE_KNOWN_KEYS = _PREPARE_BOOL_KEYS | _PREPARE_VALUE_KEYS | frozenset({"roi_hw"})
