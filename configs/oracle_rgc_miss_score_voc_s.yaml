@@ -1,6 +1,6 @@
 # VOC yolov8s oracle — miss_score selection (ChatGPT formula), 0.2→0.3
 # Baseline: VOC_random_0.3_s (peak mAP50-95 = 0.5916)
-# Selection: search_oracle_rgc.py --write-candidate miss_score
+# Oracle split: use prepare_al_split --mode rgc or run_chain with mode: rgc
 type: random_train
 fractions: [0.3]
 
@@ -10,5 +10,6 @@ yolo_args:
   imgsz: 640
   batch: 48
   epochs: 65
+  deterministic: "True"
   pretrained: "False"
   name: "VOC_random_0.3_s_oracle_miss_score"

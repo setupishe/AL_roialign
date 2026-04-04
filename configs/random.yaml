@@ -10,5 +10,6 @@ yolo_args:
   imgsz: 640
   batch: 48
   epochs: 65
+  deterministic: "True"
   pretrained: "False"
   name: "VOC_random_${fraction}_m"

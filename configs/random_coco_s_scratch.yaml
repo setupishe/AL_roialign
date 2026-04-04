@@ -1,0 +1,14 @@
+# COCO random baseline, yolov8s — TRUE from scratch (yolov8s.yaml, no pretrained weights)
+# Fractions limited to 0.2 and 0.3 for scratch comparison
+type: random_train
+fractions: [0.2, 0.3]
+
+yolo_args:
+  data: "COCO_${fraction}.yaml"
+  model: yolov8s.yaml
+  imgsz: 640
+  batch: 48
+  epochs: 65
+  pretrained: "False"
+  seed: 0
+  name: "COCO_random_${fraction}_s_scratch"

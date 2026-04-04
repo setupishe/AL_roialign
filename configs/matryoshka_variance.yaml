@@ -30,6 +30,7 @@ yolo_args:
   name: "VOC_matryoshka_variance_${next_range}_m"
   device: "${device}"
   epochs: 65
+  deterministic: "True"
   matryoshka: "True"
   matryoshka_shared_assign: "true"
   matryoshka_bn_aux_freeze: "true"

@@ -19,3 +19,4 @@ yolo_args:
   name: "${DATASET_NAME}_${mode}_${next_range}"
   device: "${device}"
   epochs: 65
+  deterministic: "True"

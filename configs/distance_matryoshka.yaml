@@ -22,4 +22,5 @@ yolo_args:
   name: "VOC_distance_${next_range}_s_matryoshka"
   device: "${device}"
   epochs: 65
+  deterministic: "True"
   matryoshka: "True"

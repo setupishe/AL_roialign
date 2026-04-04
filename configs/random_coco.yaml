@@ -5,9 +5,10 @@ fractions: [0.05, 0.075, 0.1, 0.125, 0.15, 0.175]
 
 yolo_args:
   data: "COCO_${fraction}.yaml"
-  model: yolov8m.pt
+  model: yolov8s.pt
   imgsz: 640
   batch: 48
   epochs: 65
+  deterministic: "True"
   pretrained: "False"
   name: "COCO_random_${fraction}_m"

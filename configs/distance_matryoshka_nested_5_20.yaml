@@ -30,6 +30,7 @@ yolo_args:
   name: "VOC_distance_${next_range}_m_matryoshka_everything_really_everything_5_20"
   device: "${device}"
   epochs: 65
+  deterministic: "True"
   matryoshka: "True"
   matryoshka_shared_assign: "true"
   matryoshka_bn_aux_freeze: "true"

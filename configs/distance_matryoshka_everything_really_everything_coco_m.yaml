@@ -39,7 +39,6 @@ yolo_args:
   name: "COCO_distance_${next_range}_m_matryoshka_everything_really_everything"
   device: "${device}"
   epochs: 65
-  deterministic: "False"
   matryoshka: "True"
   matryoshka_shared_assign: "true"
   matryoshka_bn_aux_freeze: "true"

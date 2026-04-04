@@ -9,5 +9,4 @@ yolo_args:
   epochs: 65
   pretrained: "False"
   seed: 0
-  deterministic: "False"
   name: "VOC_random_${fraction}_s_5_20_night"

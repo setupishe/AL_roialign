@@ -1,0 +1,15 @@
+# VOC random baseline, yolov8s — TRUE from scratch (yolov8s.yaml, no pretrained weights)
+# Validation experiment for pretrained-bug finding (2026-04-03)
+# Only 0.2 and 0.3 fractions needed for AL comparison
+type: random_train
+fractions: [0.2, 0.3]
+
+yolo_args:
+  data: "VOC_${fraction}.yaml"
+  model: yolov8s.yaml
+  imgsz: 640
+  batch: 48
+  epochs: 65
+  pretrained: "False"
+  seed: 0
+  name: "VOC_random_${fraction}_s_scratch"

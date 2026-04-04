@@ -1,7 +1,6 @@
-# COCO distance AL chain, yolov8m, Matryoshka everything, pseudolabels — seed 0
-# Same as coco_m but uses predicted boxes (no GT labels on unlabeled pool)
-# Base checkpoint: COCO_random_0.2_m_matryoshka_everything (already exists)
-# EDIT datasets_dir and weights_base_path for target machine
+# COCO distance AL chain, yolov8s, Matryoshka everything, from scratch — seed 0
+# Base checkpoint: COCO_random_${range}_s_scratch_matryoshka_everything
+# Set datasets_dir and weights_base_path to match target machine paths
 
 mode: distance
 dataset_name: COCO
@@ -15,9 +14,9 @@ datasets_dir: /home/setupishe/datasets
 weights_base_path: /home/setupishe/ultralytics/runs/detect
 # ─────────────────────────────────────────────────────────────────────────────
 
-first_weights_template: "${weights_base_path}/COCO_random_${range}_m_matryoshka_everything/weights/best.pt"
-weights_template: "${weights_base_path}/COCO_distance_${range}_m_matryoshka_everything_really_everything_pseudo/weights/best.pt"
-split_name: distance_matryoshka_everything_really_everything_m_pseudo
+first_weights_template: "${weights_base_path}/COCO_random_${range}_s_scratch_matryoshka_everything/weights/best.pt"
+weights_template: "${weights_base_path}/COCO_distance_${range}_s_scratch_matryoshka_everything_really_everything/weights/best.pt"
+split_name: distance_matryoshka_everything_really_everything_s_scratch
 
 prepare_args:
   seg2line: false
@@ -29,17 +28,16 @@ prepare_args:
   io_workers: 4
   roi_hw: [4, 4]
   netron_layer_names: "/model.15/cv2/act/Mul /model.18/cv2/act/Mul /model.21/cv2/act/Mul"
-  from_predictions: true
   train_subdir: train2017
 
 yolo_args:
-  model: yolov8m.pt
+  model: yolov8s.yaml
   pretrained: "False"
   data: "COCO_${next_range}_${split_name}.yaml"
   batch: 48
-  name: "COCO_distance_${next_range}_m_matryoshka_everything_really_everything_pseudo"
-  device: "${device}"
   epochs: 65
+  name: "COCO_distance_${next_range}_s_scratch_matryoshka_everything_really_everything"
+  device: "${device}"
   matryoshka: "True"
   matryoshka_shared_assign: "true"
   matryoshka_bn_aux_freeze: "true"

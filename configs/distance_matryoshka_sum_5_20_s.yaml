@@ -33,6 +33,7 @@ yolo_args:
   data: VOC_${next_range}_${split_name}.yaml
   device: ${device}
   epochs: 65
+  deterministic: "True"
   matryoshka: 'True'
   matryoshka_bn_aux_freeze: 'true'
   matryoshka_shared_assign: 'true'

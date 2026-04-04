@@ -1,0 +1,28 @@
+# VOC confidence (F-score) AL, yolov8s — TRUE from scratch
+# One step: 0.2 -> 0.3 (requires train_0.2.txt + VOC_random_0.2_s_scratch with best_conf.txt)
+# prepare: conf_criteria.py
+
+mode: confidences
+dataset_name: VOC
+device: 0
+ranges: [0.2, 0.3]
+bg2all_ratio: 0
+prepare_script: conf_criteria.py
+weights_base_path: /home/setupishe/ultralytics/runs/detect
+first_weights_template: "${weights_base_path}/VOC_random_${range}_s_scratch/weights/best.pt"
+weights_template: "${weights_base_path}/VOC_confidences_${range}_s_scratch/weights/best.pt"
+split_name: confidences_s_scratch
+
+prepare_args:
+  cleanup: true
+
+yolo_args:
+  model: yolov8s.yaml
+  pretrained: "False"
+  data: "VOC_${next_range}_${split_name}.yaml"
+  imgsz: 640
+  batch: 48
+  epochs: 65
+  seed: 0
+  name: "VOC_confidences_${next_range}_s_scratch"
+  device: "${device}"

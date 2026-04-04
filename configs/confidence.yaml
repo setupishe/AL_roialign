@@ -17,3 +17,4 @@ yolo_args:
   batch: 48
   name: "${DATASET_NAME}_${mode}_${next_range}"
   epochs: 65
+  deterministic: "True"

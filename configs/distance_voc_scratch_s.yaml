@@ -1,0 +1,39 @@
+# VOC distance AL, yolov8s — TRUE from scratch (yolov8s.yaml, no pretrained weights)
+# One step: 0.2 -> 0.3
+# Embeddings extracted from VOC_random_0.2_s_scratch checkpoint
+# Training starts from random init (yolov8s.yaml, pretrained: False)
+# Prepare pipeline pinned to old AL_roialign_old_version behavior
+
+mode: distance
+dataset_name: VOC
+device: 0
+ranges: [0.2, 0.3]
+bg2all_ratio: 0
+prepare_script: prepare_al_split.py
+weights_base_path: /home/setupishe/ultralytics/runs/detect
+first_weights_template: "${weights_base_path}/VOC_random_${range}_s_scratch/weights/best.pt"
+weights_template: "${weights_base_path}/VOC_distance_${range}_s_scratch/weights/best.pt"
+split_name: distance_s_scratch
+
+prepare_args:
+  seg2line: true
+  cleanup: true
+  save_crops: true
+  batched_inference: false
+  index_backend: annoy
+  roi_hw: [12, 6]
+  netron_layer_names: "/model.22/Concat /model.22/Concat_1 /model.22/Concat_2"
+  # from_predictions intentionally absent -> use GT annotations
+  # skip_pca intentionally absent -> train PCA on 1/5 subset, apply to all
+  # coarse_to_fine intentionally absent -> old pipeline used plain Annoy search
+
+yolo_args:
+  model: yolov8s.yaml
+  pretrained: "False"
+  data: "VOC_${next_range}_${split_name}.yaml"
+  imgsz: 640
+  batch: 48
+  epochs: 65
+  seed: 0
+  name: "VOC_distance_${next_range}_s_scratch"
+  device: "${device}"
