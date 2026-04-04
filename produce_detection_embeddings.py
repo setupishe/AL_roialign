@@ -610,6 +610,10 @@ class YoloEmbeddingsProducer:
 
         if self.save_crops:
             x1, y1, x2, y2 = abs_bbox
+            x1 = max(0, min(x1, img_w - 1))
+            y1 = max(0, min(y1, img_h - 1))
+            x2 = max(x1 + 1, min(x2, img_w))
+            y2 = max(y1 + 1, min(y2, img_h))
             cropped_img = image_array[y1:y2, x1:x2]
             cv2.imwrite(str(output_path), cropped_img)
 
