@@ -14,6 +14,7 @@ Candidates (for reference / reuse):
 import math
 import os
 from collections import Counter
+from time import perf_counter
 
 import numpy as np
 
@@ -325,102 +326,138 @@ def run_rgc_al_prepare(
     infer_batch_size: int = 16,
     baseline_split_rel: str | None = None,
     yolo_device=None,
+    log_step_times: bool = False,
+    timing_log_path: str | None = None,
 ) -> None:
     """RGC miss_score oracle — same outputs as embedding AL: train split + Ultralytics yaml.
 
     Selects exactly k = |train_{{to}} \\ from_split| images so the labeled set size
     matches the standard random train_{{to}}.txt budget.
     """
-    to_key = str(to_fraction)
+    timing_rows: list[tuple[str, float]] = []
+    t0 = perf_counter() if log_step_times else 0.0
+    last = t0
 
-    if template_yaml is None:
-        template_yaml = os.path.join(ultralytics_cfg_dir, f"{dataset_name}.yaml")
-    baseline_split_rel = baseline_split_rel or f"train_{to_key}.txt"
+    def _mark(step: str) -> None:
+        nonlocal last
+        if not log_step_times:
+            return
+        now = perf_counter()
+        timing_rows.append((step, now - last))
+        last = now
 
-    from_split_path = os.path.join(dataset_dir, from_split_relpath)
-    baseline_path = os.path.join(dataset_dir, baseline_split_rel)
+    def _write_timing_log() -> None:
+        if not log_step_times or not timing_log_path:
+            return
+        total = perf_counter() - t0
+        lines = [f"total_elapsed_seconds\t{total:.3f}", ""]
+        lines.extend(f"{n}\t{s:.3f}" for n, s in timing_rows)
+        parent = os.path.dirname(timing_log_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(timing_log_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+        print(f"Step timing log written: {timing_log_path}")
 
-    for label, p in (
-        ("from_split", from_split_path),
-        ("baseline", baseline_path),
-        ("template_yaml", template_yaml),
-    ):
-        if not os.path.isfile(p):
-            raise FileNotFoundError(f"RGC prepare: missing {label}: {p}")
-    if not os.path.isfile(weights_path):
-        raise FileNotFoundError(f"RGC prepare: weights not found: {weights_path}")
+    try:
+        to_key = str(to_fraction)
 
-    gt_db = build_gt_database(dataset_dir, train_subdir)
-    from_names = load_split(from_split_path)
-    baseline_names = load_split(baseline_path)
-    from_set = set(from_names)
-    baseline_added = [n for n in baseline_names if n not in from_set]
-    if len(set(baseline_added)) != len(baseline_added):
-        raise ValueError(
-            "RGC prepare: duplicate image names in baseline split (vs from_split); "
-            "fix train_{to} list before running oracle."
+        if template_yaml is None:
+            template_yaml = os.path.join(ultralytics_cfg_dir, f"{dataset_name}.yaml")
+        baseline_split_rel = baseline_split_rel or f"train_{to_key}.txt"
+
+        from_split_path = os.path.join(dataset_dir, from_split_relpath)
+        baseline_path = os.path.join(dataset_dir, baseline_split_rel)
+
+        for label, p in (
+            ("from_split", from_split_path),
+            ("baseline", baseline_path),
+            ("template_yaml", template_yaml),
+        ):
+            if not os.path.isfile(p):
+                raise FileNotFoundError(f"RGC prepare: missing {label}: {p}")
+        if not os.path.isfile(weights_path):
+            raise FileNotFoundError(f"RGC prepare: weights not found: {weights_path}")
+        _mark("validate_inputs")
+
+        gt_db = build_gt_database(dataset_dir, train_subdir)
+        from_names = load_split(from_split_path)
+        baseline_names = load_split(baseline_path)
+        from_set = set(from_names)
+        baseline_added = [n for n in baseline_names if n not in from_set]
+        if len(set(baseline_added)) != len(baseline_added):
+            raise ValueError(
+                "RGC prepare: duplicate image names in baseline split (vs from_split); "
+                "fix train_{to} list before running oracle."
+            )
+        k = len(baseline_added)
+        unlabeled_imgs = sorted(n for n in gt_db if n not in from_set)
+        unlabeled_set = set(unlabeled_imgs)
+
+        if k < 1:
+            raise ValueError(
+                "RGC prepare: budget k=0 (baseline adds no images vs from_split). "
+                "Check from_split / baseline split paths."
+            )
+        if k > len(unlabeled_set):
+            raise ValueError(
+                f"RGC prepare: k={k} exceeds unlabeled pool {len(unlabeled_set)} "
+                "(duplicate lines in baseline split or inconsistent splits)."
+            )
+        missing = [n for n in baseline_added if n not in unlabeled_set]
+        if missing:
+            raise ValueError(
+                f"RGC prepare: {len(missing)} baseline image(s) not in on-disk train pool "
+                f"(first few): {missing[:8]}"
+            )
+        _mark("load_gt_and_splits")
+
+        print("=" * 80)
+        print("RGC prepare_al_split — miss_score oracle")
+        print("=" * 80)
+        print(f"Dataset dir     : {dataset_dir}")
+        print(f"Train subdir    : {train_subdir}")
+        print(f"Labeled split   : {from_split_path} ({len(from_names)} images)")
+        print(f"Baseline split  : {baseline_path} (k = {k} new images vs labeled)")
+        print(f"Unlabeled pool  : {len(unlabeled_imgs)} images")
+        print(f"Weights         : {weights_path}")
+        print("=" * 80)
+
+        scores = score_miss_score(
+            unlabeled_imgs,
+            gt_db,
+            from_names,
+            weights_path,
+            dataset_dir,
+            train_subdir,
+            batch_size=infer_batch_size,
+            device=yolo_device,
         )
-    k = len(baseline_added)
-    unlabeled_imgs = sorted(n for n in gt_db if n not in from_set)
-    unlabeled_set = set(unlabeled_imgs)
+        _mark("score_miss_score")
+        selected = select_top_k(scores, k)
 
-    if k < 1:
-        raise ValueError(
-            "RGC prepare: budget k=0 (baseline adds no images vs from_split). "
-            "Check from_split / baseline split paths."
-        )
-    if k > len(unlabeled_set):
-        raise ValueError(
-            f"RGC prepare: k={k} exceeds unlabeled pool {len(unlabeled_set)} "
-            "(duplicate lines in baseline split or inconsistent splits)."
-        )
-    missing = [n for n in baseline_added if n not in unlabeled_set]
-    if missing:
-        raise ValueError(
-            f"RGC prepare: {len(missing)} baseline image(s) not in on-disk train pool "
-            f"(first few): {missing[:8]}"
+        baseline_summary = summarize_selection(baseline_added, gt_db)
+        sel_summary = summarize_selection(selected, gt_db)
+        overlap = len(set(selected) & set(baseline_added))
+        print_summary("baseline_random", baseline_summary)
+        print_summary("rgc_miss_score", sel_summary, overlap=overlap)
+        _mark("select_and_summarize")
+
+        out_txt = os.path.join(dataset_dir, f"train_{to_key}_{split_name}.txt")
+        out_yaml = os.path.join(
+            ultralytics_cfg_dir,
+            f"{dataset_name}_{to_key}_{split_name}.yaml",
         )
 
-    print("=" * 80)
-    print("RGC prepare_al_split — miss_score oracle")
-    print("=" * 80)
-    print(f"Dataset dir     : {dataset_dir}")
-    print(f"Train subdir    : {train_subdir}")
-    print(f"Labeled split   : {from_split_path} ({len(from_names)} images)")
-    print(f"Baseline split  : {baseline_path} (k = {k} new images vs labeled)")
-    print(f"Unlabeled pool  : {len(unlabeled_imgs)} images")
-    print(f"Weights         : {weights_path}")
-    print("=" * 80)
-
-    scores = score_miss_score(
-        unlabeled_imgs,
-        gt_db,
-        from_names,
-        weights_path,
-        dataset_dir,
-        train_subdir,
-        batch_size=infer_batch_size,
-        device=yolo_device,
-    )
-    selected = select_top_k(scores, k)
-
-    baseline_summary = summarize_selection(baseline_added, gt_db)
-    sel_summary = summarize_selection(selected, gt_db)
-    overlap = len(set(selected) & set(baseline_added))
-    print_summary("baseline_random", baseline_summary)
-    print_summary("rgc_miss_score", sel_summary, overlap=overlap)
-
-    out_txt = os.path.join(dataset_dir, f"train_{to_key}_{split_name}.txt")
-    out_yaml = os.path.join(
-        ultralytics_cfg_dir,
-        f"{dataset_name}_{to_key}_{split_name}.yaml",
-    )
-
-    write_split(out_txt, from_names, selected, train_subdir)
-    print(f"Saved split: {out_txt}")
-    write_yaml_from_template(
-        template_yaml,
-        out_yaml,
-        os.path.basename(out_txt),
-    )
-    print(f"Saved yaml: {out_yaml}")
+        write_split(out_txt, from_names, selected, train_subdir)
+        print(f"Saved split: {out_txt}")
+        _mark("write_split_txt")
+        write_yaml_from_template(
+            template_yaml,
+            out_yaml,
+            os.path.basename(out_txt),
+        )
+        print(f"Saved yaml: {out_yaml}")
+        _mark("write_ultralytics_yaml")
+    finally:
+        _write_timing_log()

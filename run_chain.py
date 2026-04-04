@@ -14,6 +14,12 @@ from pathlib import Path
 
 import yaml
 
+from prepare_args_schema import (
+    CONF_CRITERIA_PREPARE_KEYS,
+    PREPARE_BOOL_KEYS,
+    PREPARE_KNOWN_KEYS,
+)
+
 
 # ── git change detection ──────────────────────────────────────────────────────
 
@@ -61,53 +67,17 @@ def build_yolo_args(template: dict, ctx: dict) -> list[str]:
     return [f"{k}={expand(v, ctx)}" for k, v in template.items()]
 
 
-# YAML `prepare_args` keys → extra argv for prepare scripts (flag names = key with `_` → `-`).
-_PREPARE_BOOL_KEYS = frozenset(
-    {
-        "batched_inference",
-        "save_crops",
-        "seg2line",
-        "cleanup",
-        "skip_pca",
-        "coarse_to_fine",
-        "from_predictions",
-        "separate_maps_voting",
-    }
-)
-_PREPARE_VALUE_KEYS = frozenset(
-    {
-        "index_backend",
-        "io_workers",
-        "onnx_batch_size",
-        "granularity_divs",
-        "ctf_k1_mult",
-        "ctf_k2_mult",
-        "ctf_d1_div",
-        "ctf_d2_div",
-        "netron_layer_names",
-        "seed",
-        "image_aggregation",
-        "use_dim",
-        "train_subdir",
-        "rgc_batch_size",
-        "rgc_baseline_split",
-    }
-)
-_PREPARE_KNOWN_KEYS = _PREPARE_BOOL_KEYS | _PREPARE_VALUE_KEYS | frozenset({"roi_hw"})
-_CONF_CRITERIA_PREPARE_KEYS = frozenset({"seg2line", "cleanup"})
-
-
 def _prepare_args_to_argv(prepare_args: dict) -> list[str]:
     """Turn cfg `prepare_args` dict into CLI tokens for prepare_al_split.py (and conf_criteria subset)."""
     argv: list[str] = []
     for key, val in prepare_args.items():
         if val is None:
             continue
-        if key not in _PREPARE_KNOWN_KEYS:
+        if key not in PREPARE_KNOWN_KEYS:
             raise ValueError(
-                f"Unknown prepare_args key '{key}'. Known: {sorted(_PREPARE_KNOWN_KEYS)}"
+                f"Unknown prepare_args key '{key}'. Known: {sorted(PREPARE_KNOWN_KEYS)}"
             )
-        if key in _PREPARE_BOOL_KEYS:
+        if key in PREPARE_BOOL_KEYS:
             if key == "batched_inference":
                 if val is False:
                     argv.append("--no-batched-inference")
@@ -246,7 +216,7 @@ def run_active_learning(cfg: dict, config_path: str) -> None:
                 "--split-name", split_name,
                 "--bg2all-ratio", str(bg2all_ratio),
             ]
-            pa = {k: v for k, v in prepare_args.items() if k in _CONF_CRITERIA_PREPARE_KEYS}
+            pa = {k: v for k, v in prepare_args.items() if k in CONF_CRITERIA_PREPARE_KEYS}
             cmd.extend(_prepare_args_to_argv(pa))
         else:
             cmd = [

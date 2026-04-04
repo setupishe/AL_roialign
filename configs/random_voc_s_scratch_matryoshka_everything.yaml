@@ -1,0 +1,22 @@
+# VOC random baseline, yolov8s, full Matryoshka, from scratch
+# Fractions 0.2 and 0.3 only
+type: random_train
+fractions: [0.2, 0.3]
+
+yolo_args:
+  data: "VOC_${fraction}.yaml"
+  model: yolov8s.yaml
+  imgsz: 640
+  batch: 48
+  epochs: 65
+  deterministic: "True"
+  pretrained: "False"
+  seed: 0
+  name: "VOC_random_${fraction}_s_scratch_matryoshka_everything"
+  matryoshka: "True"
+  matryoshka_shared_assign: "True"
+  matryoshka_bn_aux_freeze: "True"
+  matryoshka_weights: "[0.2,0.3,0.4,1.0]"
+  matryoshka_weight_warmup: "True"
+  matryoshka_weight_warmup_start_step: 10
+  matryoshka_weight_warmup_steps: 20

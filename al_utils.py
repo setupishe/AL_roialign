@@ -3,6 +3,41 @@ import os, glob, shutil
 from PIL import Image
 import cv2
 import pickle
+from time import perf_counter
+
+
+class PrepareStepTimer:
+    """Wall-clock deltas between mark() calls; optional total from construction to write()."""
+
+    def __init__(self, enabled: bool, path: str | None) -> None:
+        self.enabled = bool(enabled)
+        self.path = path or ""
+        self.rows: list[tuple[str, float]] = []
+        self._t0 = perf_counter() if self.enabled else 0.0
+        self._last = self._t0
+
+    def mark(self, name: str) -> None:
+        if not self.enabled:
+            return
+        now = perf_counter()
+        self.rows.append((name, now - self._last))
+        self._last = now
+
+    def write(self) -> None:
+        if not self.enabled or not self.path:
+            return
+        total = perf_counter() - self._t0
+        lines = [
+            f"total_elapsed_seconds\t{total:.3f}",
+            "",
+        ]
+        lines.extend(f"{n}\t{s:.3f}" for n, s in self.rows)
+        parent = os.path.dirname(self.path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(self.path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+        print(f"Step timing log written: {self.path}")
 
 
 def pickle_save(filepath, obj):
@@ -444,6 +479,8 @@ def select_embeddings(
     to_fraction=0.0,
     gbm_model_path="gbm_oracle_balanced.pkl",
     use_dim=None,
+    step_timer: PrepareStepTimer | None = None,
+    step_timer_label: str = "select_embeds",
 ):
     if mode not in ["distance", "density", "matryoshka_variance", "gbm_oracle"]:
         raise ValueError("`mode` should be 'distance', 'density', 'matryoshka_variance', or 'gbm_oracle'")
@@ -458,16 +495,22 @@ def select_embeddings(
     k_int = int(total_embeddings // n) if n is not None else int(k)
 
     if mode == "gbm_oracle":
-        return _select_by_gbm_oracle(
+        out = _select_by_gbm_oracle(
             first_list, second_list, k=k_int,
             from_fraction=from_fraction, to_fraction=to_fraction,
             gbm_model_path=gbm_model_path,
         )
+        if step_timer:
+            step_timer.mark(f"{step_timer_label}_gbm_oracle")
+        return out
 
     if mode == "matryoshka_variance":
-        return _select_by_granularity_variance(
+        out = _select_by_granularity_variance(
             first_list, second_list, k=k_int, granularity_divs=granularity_divs
         )
+        if step_timer:
+            step_timer.mark(f"{step_timer_label}_matryoshka_variance")
+        return out
 
     embedding_dim = get_embedding_dim(first_list)
     # Allow using a shorter matryoshka prefix for distance computation
@@ -508,6 +551,8 @@ def select_embeddings(
             print("Building HNSW index from the first list...")
             index = build_hnsw_index(first_list, embedding_dim, use_dim=use_dim)
             print("HNSW index built.")
+        if step_timer:
+            step_timer.mark(f"{step_timer_label}_build_labeled_index")
 
         if mode == "distance":
             print(f"Selecting top {k} embeddings with the largest distances.")
@@ -530,6 +575,8 @@ def select_embeddings(
             embeds_with_scores = _score_files_hnsw(
                 index, second_list, use_dim, nn_k, hnsw_batch_size
             )
+        if step_timer:
+            step_timer.mark(f"{step_timer_label}_score_candidates")
         if image_aggregation == "max":
             sorted_embeds = sorted(embeds_with_scores, key=lambda x: x[0], reverse=reverse)
             res = []
@@ -572,8 +619,12 @@ def select_embeddings(
     d1 = max(1, embedding_dim // coarse_d1_div)
     print(f"[Stage 1] Building HNSW index on {d1}/{embedding_dim} dims...")
     index1 = build_hnsw_index(first_list, embedding_dim, use_dim=d1)
+    if step_timer:
+        step_timer.mark(f"{step_timer_label}_ctf_stage1_index")
     print("[Stage 1] Ranking candidates...")
     scores1 = _score_files_hnsw(index1, second_list, d1, nn_k, hnsw_batch_size)
+    if step_timer:
+        step_timer.mark(f"{step_timer_label}_ctf_stage1_score")
     stage1_sorted = sorted(scores1, key=lambda x: x[0], reverse=reverse)
     candidates_stage1 = _collect_top_by_image(stage1_sorted, k1)
 
@@ -581,8 +632,12 @@ def select_embeddings(
     d2 = max(1, embedding_dim // coarse_d2_div)
     print(f"[Stage 2] Building HNSW index on {d2}/{embedding_dim} dims...")
     index2 = build_hnsw_index(first_list, embedding_dim, use_dim=d2)
+    if step_timer:
+        step_timer.mark(f"{step_timer_label}_ctf_stage2_index")
     print("[Stage 2] Re-ranking candidates...")
     scores2 = _score_files_hnsw(index2, candidates_stage1, d2, nn_k, hnsw_batch_size)
+    if step_timer:
+        step_timer.mark(f"{step_timer_label}_ctf_stage2_score")
     stage2_sorted = sorted(scores2, key=lambda x: x[0], reverse=reverse)
     candidates_stage2 = _collect_top_by_image(stage2_sorted, k2)
 
@@ -610,6 +665,8 @@ def select_embeddings(
         for i, file in enumerate(batch_files):
             score = _score_from_distances(distances[i].tolist(), mode)
             scores3.append((score, file))
+    if step_timer:
+        step_timer.mark(f"{step_timer_label}_ctf_stage3_exact")
     if image_aggregation == "max":
         stage3_sorted = sorted(scores3, key=lambda x: x[0], reverse=reverse)
         res = []
@@ -647,6 +704,8 @@ def select_embeddings_voting(
     hnsw_batch_size=1024,
     exact_batch_size=2048,
     image_aggregation="max",
+    step_timer: PrepareStepTimer | None = None,
+    step_timer_label: str = "select_embeds_voting",
 ):
     """
     Run selection separately for multiple embedding spaces (e.g. 3 feature maps),
@@ -665,7 +724,7 @@ def select_embeddings_voting(
         return []
 
     per_space_selected = []
-    for fl, sl in zip(first_lists, second_lists):
+    for mi, (fl, sl) in enumerate(zip(first_lists, second_lists)):
         per_space_selected.append(
             select_embeddings(
                 fl,
@@ -680,6 +739,8 @@ def select_embeddings_voting(
                 coarse_d2_div=coarse_d2_div,
                 hnsw_batch_size=hnsw_batch_size,
                 exact_batch_size=exact_batch_size,
+                step_timer=step_timer,
+                step_timer_label=f"{step_timer_label}_m{mi}",
             )
         )
 
@@ -701,4 +762,6 @@ def select_embeddings_voting(
         return float(sum(rs) / max(1, len(rs)))
 
     ordered = sorted(votes.keys(), key=lambda img: (-votes[img], avg_rank(img), img))
+    if step_timer:
+        step_timer.mark(f"{step_timer_label}_combine_votes")
     return ordered[: int(k)]

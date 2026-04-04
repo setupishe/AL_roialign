@@ -1,5 +1,9 @@
 import argparse
+import atexit
 import json
+import os
+import time
+
 import onnx
 from al_utils import *
 from produce_detection_embeddings import *
@@ -153,6 +157,15 @@ if __name__ == "__main__":
             "(default: train_{to_fraction}.txt). Used only to set selection budget k."
         ),
     )
+    parser.add_argument(
+        "--time",
+        dest="log_step_times",
+        action="store_true",
+        help=(
+            "Write per-step wall times (seconds) to "
+            "train_{to}_{split_name}.prepare_step_times.txt next to the prepared split."
+        ),
+    )
     parser.set_defaults(batched_inference=True)
 
     args = parser.parse_args()
@@ -191,6 +204,16 @@ if __name__ == "__main__":
     # Default bbox source is annotations (historical behavior): `from_annotations_in_dir=True`.
     # If user passes `--from-predictions`, switch to predicted bboxes.
     from_annotations_in_dir = not args.from_predictions
+    log_step_times = bool(args.log_step_times)
+    timing_log_path = (
+        os.path.join(
+            datasets_dir,
+            dataset_name,
+            f"train_{to_fraction}_{split_name}.prepare_step_times.txt",
+        )
+        if log_step_times
+        else None
+    )
 
     if str(mode).lower() == "rgc":
         from search_oracle_rgc import run_rgc_al_prepare
@@ -207,6 +230,8 @@ if __name__ == "__main__":
             infer_batch_size=int(args.rgc_batch_size),
             baseline_split_rel=args.rgc_baseline_split,
             yolo_device=device,
+            log_step_times=log_step_times,
+            timing_log_path=timing_log_path,
         )
         raise SystemExit(0)
     
@@ -232,7 +257,9 @@ if __name__ == "__main__":
 
     txt_path = f"{datasets_dir}/{dataset_name}/{from_split}"
 
-    import time
+    timer = PrepareStepTimer(log_step_times, timing_log_path)
+    if log_step_times:
+        atexit.register(timer.write)
 
     def check_busy():
         while True:
@@ -254,10 +281,12 @@ if __name__ == "__main__":
             time.sleep(60)
 
     check_busy()
+    timer.mark("check_busy")
 
     with open(txt_path, "r") as f:
         lines = f.readlines()
         from_names = [os.path.basename(x.strip()) for x in lines if x.strip()]
+    timer.mark("read_from_split")
     print(
         "\n===============Populating image dir with corresponding formatted anno files...==============="
     )
@@ -278,6 +307,7 @@ if __name__ == "__main__":
                     open(file.replace("jpg", "txt"), "a").close()
     else:
         print("Skipping populating annotation txts because --from-predictions is enabled.")
+    timer.mark("populate_or_skip_annotation_txts")
 
     def _onnx_supports_batched_inference(path: str) -> bool:
         model = onnx.load(path)
@@ -313,6 +343,7 @@ if __name__ == "__main__":
         raise RuntimeError(
             f"Batched inference is enabled but exported ONNX is still fixed to batch=1: {onnx_path}"
         )
+    timer.mark("ensure_onnx")
 
     print("\n===============Infering model on all available data...===============")
 
@@ -340,6 +371,7 @@ if __name__ == "__main__":
             print("Skipping embeds computation since they already exist (_DONE.json present)")
         else:
             shutil.rmtree(embeds_dir)
+    timer.mark("embeds_count_and_skip_check")
 
     if compute_embeds:
         output_alias_names = {}
@@ -418,6 +450,7 @@ if __name__ == "__main__":
         # If we skipped computation, still define expected_embeddings_files for downstream checks.
         if expected_embeddings_files is None:
             expected_embeddings_files = _count_npy(embeds_dir)
+    timer.mark("produce_embeddings" if compute_embeds else "embeddings_skipped")
 
     print("\n===============Preprocessing embeds with PCA...===============")
     embeddings_source = embeds_dir
@@ -476,7 +509,11 @@ if __name__ == "__main__":
             )
         else:
             print("Creating subset folder for PCA training...")
-            temp_folder = f"temp_folder_{from_fraction}_{split_name}"
+            temp_folder = os.path.join(
+                datasets_dir,
+                dataset_name,
+                f"temp_folder_{from_fraction}_{split_name}",
+            )
             force_mkdir(temp_folder)
             embeds_list = glob.glob(f"{embeddings_source}/*npy")
             for i, file in tqdm(enumerate(embeds_list)):
@@ -520,6 +557,7 @@ if __name__ == "__main__":
                     "npy_files": int(_count_npy(reduced_embeds_dir)),
                 },
             )
+    timer.mark("preprocess_reduced_embeds" if preprocess_embeds else "preprocess_skipped")
 
     # #removing whole img embeds, leaving only bboxes embeds
     # for file in glob.glob(f"{reduced_embeds_dir}/**/*npy, recursive=True"):
@@ -529,8 +567,20 @@ if __name__ == "__main__":
     print("\n===============Selecting samples===============")
     target_num = len(filelist) * (to_fraction - from_fraction)
     list_suffix = "_separate_vote" if separate_maps_voting else ""
-    first_list_path = f"first_list_{from_fraction}_{split_name}{list_suffix}.pickle"
-    second_list_path = f"second_list_{from_fraction}_{split_name}{list_suffix}.pickle"
+    selection_cache_dir = os.path.join(
+        datasets_dir,
+        dataset_name,
+        "al_selection_cache",
+    )
+    os.makedirs(selection_cache_dir, exist_ok=True)
+    first_list_path = os.path.join(
+        selection_cache_dir,
+        f"first_list_{from_fraction}_{split_name}{list_suffix}.pickle",
+    )
+    second_list_path = os.path.join(
+        selection_cache_dir,
+        f"second_list_{from_fraction}_{split_name}{list_suffix}.pickle",
+    )
 
     print("Creating filelists for embeds selector...")
     if all([os.path.exists(item) for item in [first_list_path, second_list_path]]):
@@ -577,8 +627,12 @@ if __name__ == "__main__":
             pickle_save(first_list_path, first_list)
             pickle_save(second_list_path, second_list)
             filelists = (first_list, second_list)
+    timer.mark("build_selector_filelists")
 
-    selected_path = f"selected_embeds_{from_fraction}_{split_name}{list_suffix}.pickle"
+    selected_path = os.path.join(
+        selection_cache_dir,
+        f"selected_embeds_{from_fraction}_{split_name}{list_suffix}.pickle",
+    )
     if os.path.exists(selected_path):
         selected = pickle_load(selected_path)
         print("Skipping, selected embeds already exist...")
@@ -598,6 +652,7 @@ if __name__ == "__main__":
                 coarse_d1_div=ctf_d1_div,
                 coarse_d2_div=ctf_d2_div,
                 image_aggregation=image_aggregation,
+                step_timer=timer,
             )
         else:
             first_list, second_list = filelists
@@ -617,8 +672,10 @@ if __name__ == "__main__":
                 from_fraction=from_fraction,
                 to_fraction=to_fraction,
                 use_dim=use_dim,
+                step_timer=timer,
             )
         pickle_save(selected_path, selected)
+    timer.mark("select_embeddings")
 
     print(
         "\n===============Creating split with correct frg/bg proportion...==============="
@@ -647,6 +704,7 @@ if __name__ == "__main__":
         f.writelines([f"./images/{train_subdir}/{x}\n" for x in from_names + not_bgs + bgs])
 
     print(f"`{res_path}` saved successfully.")
+    timer.mark("write_train_split_and_sample_backgrounds")
 
     yaml_path = f"{ultralytics_cfg_dir}/{dataset_name}_{to_fraction}_{split_name}.yaml"
     with open(
@@ -666,6 +724,7 @@ if __name__ == "__main__":
     ) as to_file:
         to_file.writelines(lines)
     print(f"`{yaml_path}` saved successfully.")
+    timer.mark("write_ultralytics_yaml")
 
     if cleanup:
         print("\n===============Cleaning up...===============")
@@ -685,3 +744,4 @@ if __name__ == "__main__":
         os.remove(second_list_path)
         os.remove(selected_path)
         print("All cleaned up!")
+    timer.mark("cleanup" if cleanup else "no_cleanup")
