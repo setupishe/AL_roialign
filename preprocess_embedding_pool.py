@@ -186,11 +186,6 @@ class EmbeddingPoolPreprocessor:
                         )
                     )
                     continue
-                batch = (batch - torch.mean(batch, 0)) / (
-                    torch.sqrt(torch.var(batch, 0)) + 1e-5
-                )
-                # print(f"mean: {torch.mean(batch, 0)}")
-                # print(f"var: {torch.var(batch, 0)}")
                 pca.partial_fit(batch)  # Use partial_fit to accommodate large datasets
             joblib.dump(pca, self.expected_pca_model_path)
 
