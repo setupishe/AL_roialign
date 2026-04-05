@@ -220,23 +220,17 @@ from al_utils import *
 
 
 def bb_iou(boxA, boxB):
-    # determine the (x, y)-coordinates of the intersection rectangle
-    xA = max(boxA[0], boxB[0])
-    yA = max(boxA[1], boxB[1])
-    xB = min(boxA[2], boxB[2])
-    yB = min(boxA[3], boxB[3])
-    # compute the area of intersection rectangle
-    interArea = max(0, xB - xA + 1) * max(0, yB - yA + 1)
-    # compute the area of both the prediction and ground-truth
-    # rectangles
-    boxAArea = (boxA[2] - boxA[0] + 1) * (boxA[3] - boxA[1] + 1)
-    boxBArea = (boxB[2] - boxB[0] + 1) * (boxB[3] - boxB[1] + 1)
-    # compute the intersection over union by taking the intersection
-    # area and dividing it by the sum of prediction + ground-truth
-    # areas - the interesection area
-    iou = interArea / float(boxAArea + boxBArea - interArea)
-    # return the intersection over union value
-    return iou
+    # boxA, boxB are YOLO normalized [xc, yc, w, h]
+    ax1, ay1 = boxA[0] - boxA[2] / 2, boxA[1] - boxA[3] / 2
+    ax2, ay2 = boxA[0] + boxA[2] / 2, boxA[1] + boxA[3] / 2
+    bx1, by1 = boxB[0] - boxB[2] / 2, boxB[1] - boxB[3] / 2
+    bx2, by2 = boxB[0] + boxB[2] / 2, boxB[1] + boxB[3] / 2
+    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+    areaA = boxA[2] * boxA[3]
+    areaB = boxB[2] * boxB[3]
+    return inter / (areaA + areaB - inter + 1e-12)
 
 
 def jpg2txt(inp):
