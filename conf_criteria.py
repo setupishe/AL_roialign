@@ -1,5 +1,6 @@
 import os, glob, shutil
 import argparse
+import shlex
 
 parser = argparse.ArgumentParser()
 
@@ -13,19 +14,34 @@ parser.add_argument("--weights")
 parser.add_argument("--split-name")
 parser.add_argument("--cleanup", action="store_true")  # on/off flag
 parser.add_argument("--seg2line", action="store_true")  # on/off flag
+parser.add_argument(
+    "--device",
+    default="0",
+    help="Ultralytics predict device (e.g. 0, cpu, cuda:0, or 0,1). Default: 0.",
+)
+parser.add_argument(
+    "--train-subdir",
+    default="train",
+    help=(
+        "Stem for split list filenames under the dataset dir, same as prepare_al_split "
+        "--train-subdir (e.g. train, train2017). Output: {stem}_{to}_{split_name}.txt."
+    ),
+)
 
 args = parser.parse_args()
 
 from_fraction = float(args.from_fraction)
 to_fraction = float(args.to_fraction)
-from_split = args.from_split
+from_split_rel = args.from_split
 dataset_name = args.dataset_name
-default_split = args.default_split
+default_split_rel = args.default_split
 weights = args.weights
 bg2all_ratio = float(args.bg2all_ratio)
 split_name = args.split_name
 cleanup = args.cleanup
 seg2line = args.seg2line
+predict_device = args.device
+train_list_stem = args.train_subdir
 
 # # CLI arguments
 
@@ -45,10 +61,10 @@ seg2line = args.seg2line
 iou_threshold = 0.7  # ultralytics default
 
 dataset_folder = f"/home/setupishe/datasets/{dataset_name}"
-to_split = f"train_{to_fraction}_{split_name}.txt"
-from_split = os.path.join(dataset_folder, from_split)
-to_split = os.path.join(dataset_folder, to_split)
-default_split = os.path.join(dataset_folder, default_split)
+to_split_rel = f"{train_list_stem}_{to_fraction}_{split_name}.txt"
+from_split = os.path.join(dataset_folder, from_split_rel)
+to_split = os.path.join(dataset_folder, to_split_rel)
+default_split = os.path.join(dataset_folder, default_split_rel)
 
 conf_path = "/".join(weights.split("/")[:-2]) + "/best_conf.txt"
 with open(conf_path, "r") as f:
@@ -69,16 +85,25 @@ frg_num = int(num_total - bg_num)
 
 inference_list = list(set(default_split_lst) - set(from_split_lst))
 
-inference_filepath = "inference_list.txt"
+work_dir = os.path.join(dataset_folder, ".conf_criteria_work")
+os.makedirs(work_dir, exist_ok=True)
+inference_filepath = os.path.join(work_dir, "inference_list.txt")
 with open(inference_filepath, "w") as f:
     f.writelines([dataset_folder + item[1:] + "\n" for item in inference_list])
 
 inference_name = "inference_results"
-preds_folder = f"/home/setupishe/ultralytics/runs/detect/{inference_name}/labels"
+preds_folder = os.path.join(work_dir, inference_name, "labels")
 
+qw, qs, qp, qd = (
+    shlex.quote(weights),
+    shlex.quote(inference_filepath),
+    shlex.quote(work_dir),
+    shlex.quote(str(predict_device)),
+)
 cmd = (
-    f"yolo predict model={weights} source='{inference_filepath}' conf={conf} iou={iou_threshold} "
-    f"name={inference_name} save=False save_conf=True save_txt=True batch=64 verbose=False"
+    f"yolo predict model={qw} source={qs} conf={conf} iou={iou_threshold} "
+    f"project={qp} name={inference_name} device={qd} save=False save_conf=True save_txt=True "
+    f"batch=64 verbose=False"
 )
 
 
@@ -238,7 +263,6 @@ def fscore(tp, fp, fn, eps=1e-6):
     return (2 * tp + eps) / (2 * tp + fp + fn + eps)
 
 
-preds_folder
 for img_path in tqdm(inference_list):
     sample = Sample()
     sample.filepath = img_path
@@ -306,11 +330,12 @@ original_yaml = f"{dataset_name}.yaml"
 with open(os.path.join(yaml_folder, original_yaml), "r") as from_file:
     lines = from_file.readlines()
 
+train_line_token = default_split_rel
 for i, line in enumerate(lines):
-    if "train: train.txt" in line:
+    if f"train: {train_line_token}" in line:
         lines[i] = (
             lines[i]
-            .replace("train.txt", os.path.basename(to_split))
+            .replace(train_line_token, to_split_rel, 1)
             .replace("118287", str(len(final_list)))
         )
 with open(
@@ -322,5 +347,4 @@ with open(
 prettyprint(f"`{os.path.join(yaml_folder, to_yaml)}` saved successfully.")
 
 if cleanup:
-    shutil.rmtree(preds_folder.rstrip("labels"))
-    os.remove("inference_list.txt")
+    shutil.rmtree(work_dir, ignore_errors=True)

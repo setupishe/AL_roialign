@@ -191,10 +191,17 @@ def run_active_learning(cfg: dict, config_path: str) -> None:
             weights_path = f"{weights_base_path}/{dataset_name}_{folder_name}_{range_val}/weights/best.pt"
 
         split_root = Path(datasets_dir) / dataset_name
+        # conf_criteria: list filenames follow prepare_args.train_subdir (e.g. train2017).
+        # prepare_al_split / others: unchanged historical train_*.txt names.
+        list_stem = (
+            str(prepare_args.get("train_subdir", "train"))
+            if prepare_script == "conf_criteria.py"
+            else "train"
+        )
         from_split = (
-            f"train_{range_val}.txt"
+            f"{list_stem}_{range_val}.txt"
             if is_first
-            else f"train_{range_val}_{split_name}.txt"
+            else f"{list_stem}_{range_val}_{split_name}.txt"
         )
         if not (split_root / from_split).is_file():
             raise FileNotFoundError(
@@ -212,9 +219,11 @@ def run_active_learning(cfg: dict, config_path: str) -> None:
                 "--to-fraction", next_range_str,
                 "--from-split", from_split,
                 "--dataset-name", dataset_name,
-                "--default-split", "train.txt",
+                "--default-split", f"{list_stem}.txt",
                 "--split-name", split_name,
                 "--bg2all-ratio", str(bg2all_ratio),
+                "--device", yolo_device,
+                "--train-subdir", list_stem,
             ]
             pa = {k: v for k, v in prepare_args.items() if k in CONF_CRITERIA_PREPARE_KEYS}
             cmd.extend(_prepare_args_to_argv(pa))
@@ -301,6 +310,7 @@ Examples:
 """,
     )
     parser.add_argument("config", help="Path to YAML config file")
+    parser.add_argument("--skip-git-check", action="store_true", help="Skip uncommitted Python files check")
     args = parser.parse_args()
 
     config_path = args.config
@@ -308,7 +318,8 @@ Examples:
         print(f"Error: config not found: {config_path}")
         sys.exit(1)
 
-    check_uncommitted_py_files()
+    if not args.skip_git_check:
+        check_uncommitted_py_files()
 
     with open(config_path) as f:
         cfg = yaml.safe_load(f)
