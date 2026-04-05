@@ -1,0 +1,46 @@
+# VOC scratch chains found in runs/detect (auto-collected).
+runs_dir: /home/setupishe/ultralytics/runs/detect
+metric: metrics/mAP50-95(B)
+title: VOC scratch chains so far
+output: voc_scratch_chains_compare.png
+chains:
+  - label: random scratch
+    kind: random
+    template: VOC_random_{frac}_s_scratch
+    fractions: [0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
+    color: "tab:blue"
+  - label: random scratch mat_everything
+    kind: random
+    template: VOC_random_{frac}_s_scratch_matryoshka_everything
+    fractions: [0.2, 0.3]
+    color: [31, 119, 180]
+  - label: distance scratch
+    kind: al
+    template: VOC_distance_{frac}_s_scratch
+    fractions: [0.3, 0.4, 0.5, 0.6, 0.7]
+    color: "orange"
+  - label: distance scratch pseudo
+    kind: al
+    template: VOC_distance_{frac}_s_scratch_pseudo
+    fractions: [0.3, 0.4, 0.5, 0.6, 0.7]
+    color: "#ff7f0e"
+  - label: distance scratch matrE
+    kind: al
+    template: VOC_distance_{frac}_s_scratch_matrE
+    fractions: [0.3, 0.4, 0.5, 0.6, 0.7]
+    color: [0.17, 0.63, 0.17]
+  - label: distance scratch matrE pseudo
+    kind: al
+    template: VOC_distance_{frac}_s_scratch_matrE_pseudo
+    fractions: [0.3]
+    color: "green"
+  - label: confidence scratch
+    kind: al
+    template: VOC_confidences_{frac}_s_scratch
+    fractions: [0.3]
+    color: "red"
+  - label: rgc scratch
+    kind: al
+    template: VOC_rgc_{frac}_s_scratch
+    fractions: [0.3, 0.4]
+    color: [148, 103, 189]
