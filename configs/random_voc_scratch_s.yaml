@@ -2,7 +2,7 @@
 # Validation experiment for pretrained-bug finding (2026-04-03)
 # Only 0.2 and 0.3 fractions needed for AL comparison
 type: random_train
-fractions: [0.2, 0.3]
+fractions: [0.4, 0.5, 0.6, 0.7]
 
 yolo_args:
   data: "VOC_${fraction}.yaml"

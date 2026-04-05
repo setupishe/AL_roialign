@@ -20,7 +20,7 @@ weights_template: "${weights_base_path}/COCO_distance_${range}_m_matryoshka_ever
 split_name: distance_matryoshka_everything_really_everything_m_pseudo
 
 prepare_args:
-  seg2line: false
+  seg2line: true
   cleanup: true
   skip_pca: true
   index_backend: hnsw

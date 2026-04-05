@@ -1,19 +1,21 @@
 # VOC confidence (F-score) AL, yolov8s — TRUE from scratch
-# One step: 0.2 -> 0.3 (requires train_0.2.txt + VOC_random_0.2_s_scratch with best_conf.txt)
+# Chain 0.3→…→0.7: first step needs train_0.3.txt (random baseline) + matching VOC_random_0.3… weights/best_conf.txt
+# train_subdir: stem for split txts + default-split train.txt (conf_criteria + run_chain)
 # prepare: conf_criteria.py
 
 mode: confidences
 dataset_name: VOC
 device: 0
-ranges: [0.2, 0.3]
+ranges: [0.3, 0.4, 0.5, 0.6, 0.7]
 bg2all_ratio: 0
 prepare_script: conf_criteria.py
 weights_base_path: /home/setupishe/ultralytics/runs/detect
-first_weights_template: "${weights_base_path}/VOC_random_${range}_s_scratch/weights/best.pt"
+first_weights_template: "${weights_base_path}/VOC_confidences_${range}_s_scratch/weights/best.pt"
 weights_template: "${weights_base_path}/VOC_confidences_${range}_s_scratch/weights/best.pt"
 split_name: confidences_s_scratch
 
 prepare_args:
+  train_subdir: train
   cleanup: true
 
 yolo_args:

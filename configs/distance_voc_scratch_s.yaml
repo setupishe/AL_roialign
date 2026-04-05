@@ -1,19 +1,18 @@
 # VOC distance AL, yolov8s — TRUE from scratch (yolov8s.yaml, no pretrained weights)
-# One step: 0.2 -> 0.3
-# Embeddings extracted from VOC_random_0.2_s_scratch checkpoint
-# Training starts from random init (yolov8s.yaml, pretrained: False)
-# Prepare pipeline pinned to old AL_roialign_old_version behavior
+# 0.2->0.3 done. Continuing: 0.3 -> 0.7
+# first_weights_template used for 0.2 seed (VOC_random_0.2_s_scratch); subsequent steps use weights_template
 
 mode: distance
 dataset_name: VOC
 device: 0
-ranges: [0.2, 0.3]
+ranges: [0.3, 0.4, 0.5, 0.6, 0.7]
 bg2all_ratio: 0
 prepare_script: prepare_al_split.py
 weights_base_path: /home/setupishe/ultralytics/runs/detect
 first_weights_template: "${weights_base_path}/VOC_random_${range}_s_scratch/weights/best.pt"
 weights_template: "${weights_base_path}/VOC_distance_${range}_s_scratch/weights/best.pt"
 split_name: distance_s_scratch
+time: true
 
 prepare_args:
   seg2line: true
