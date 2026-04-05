@@ -649,7 +649,7 @@ def select_embeddings(
 
     first_matrix = _load_matrix(first_list, use_dim=None, normalize=True)
     nn_exact = NearestNeighbors(
-        n_neighbors=int(nn_k), metric="cosine", algorithm="brute", n_jobs=-1
+        n_neighbors=int(nn_k), metric="cosine", algorithm="brute", n_jobs=1
     )
     nn_exact.fit(first_matrix)
 
