@@ -1,0 +1,46 @@
+# VOC distance AL, yolov8s, MatrE — corrected run (v2, post-bugfix 2026-04-05)
+# Fixes applied vs previous runs:
+#   - ROI coordinates now correctly map orig-norm bbox through letterbox into feature map space
+#   - skip_pca: true -> no PCA involved, but ROI fix still applies
+# First weights: VOC_random_0.2_s_scratch_matryoshka_everything (clean baseline, unaffected by embedding bugs)
+# Full chain: 0.2 -> 0.7
+
+mode: distance
+dataset_name: VOC
+device: 0
+ranges: [0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
+bg2all_ratio: 0
+prepare_script: prepare_al_split.py
+weights_base_path: /home/setupishe/ultralytics/runs/detect
+first_weights_template: "${weights_base_path}/VOC_random_${range}_s_scratch_matryoshka_everything/weights/best.pt"
+weights_template: "${weights_base_path}/VOC_distance_${range}_s_scratch_matrE_v2/weights/best.pt"
+split_name: distance_matrE_s_scratch_v2
+
+prepare_args:
+  seg2line: true
+  cleanup: true
+  skip_pca: true
+  index_backend: hnsw
+  coarse_to_fine: true
+  onnx_batch_size: 16
+  io_workers: 4
+  roi_hw: [4, 4]
+  netron_layer_names: "/model.15/cv2/act/Mul /model.18/cv2/act/Mul /model.21/cv2/act/Mul"
+  # from_predictions intentionally absent -> use GT annotations
+
+yolo_args:
+  model: yolov8s.yaml
+  pretrained: "False"
+  data: "VOC_${next_range}_${split_name}.yaml"
+  imgsz: 640
+  batch: 48
+  epochs: 65
+  seed: 0
+  name: "VOC_distance_${next_range}_s_scratch_matrE_v2"
+  device: "${device}"
+  matryoshka: "True"
+  matryoshka_shared_assign: "true"
+  matryoshka_bn_aux_freeze: "true"
+  matryoshka_weight_warmup: "true"
+  matryoshka_weight_warmup_steps: 20
+  matryoshka_weight_warmup_start_step: 10

@@ -1,0 +1,40 @@
+# VOC distance AL, yolov8s — corrected run (v2, post-bugfix 2026-04-05)
+# Fixes applied vs previous runs:
+#   - ROI coordinates now correctly map orig-norm bbox through letterbox into feature map space
+#   - PCA fit no longer applies per-batch standardization (IncrementalPCA handles centering internally)
+# First weights: VOC_random_0.2_s_scratch (clean baseline, unaffected by embedding bugs)
+# Full chain: 0.2 -> 0.7
+
+mode: distance
+dataset_name: VOC
+device: 0
+ranges: [0.3, 0.4, 0.5, 0.6, 0.7]
+bg2all_ratio: 0
+prepare_script: prepare_al_split.py
+weights_base_path: /home/setupishe/ultralytics/runs/detect
+first_weights_template: "${weights_base_path}/VOC_random_${range}_s_scratch/weights/best.pt"
+weights_template: "${weights_base_path}/VOC_distance_${range}_s_scratch_v2/weights/best.pt"
+split_name: distance_s_scratch_v2
+time: true
+
+prepare_args:
+  seg2line: true
+  cleanup: true
+  batched_inference: false
+  index_backend: annoy
+  roi_hw: [12, 6]
+  netron_layer_names: "/model.22/Concat /model.22/Concat_1 /model.22/Concat_2"
+  # from_predictions intentionally absent -> use GT annotations
+  # skip_pca intentionally absent -> train PCA on 1/5 subset, apply to all (now correct)
+  # coarse_to_fine intentionally absent -> plain Annoy search
+
+yolo_args:
+  model: yolov8s.yaml
+  pretrained: "False"
+  data: "VOC_${next_range}_${split_name}.yaml"
+  imgsz: 640
+  batch: 48
+  epochs: 65
+  seed: 0
+  name: "VOC_distance_${next_range}_s_scratch_v2"
+  device: "${device}"
