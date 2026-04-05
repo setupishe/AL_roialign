@@ -227,7 +227,12 @@ class YoloEmbeddingsProducer:
                     )
                 )
 
-        return self._compute_embeddings_from_outputs(image_inference_outputs, normalized_annotations)
+        orig_shape = orig_imgs[0].shape[:2] if load_annotations_from is None else None
+        if orig_shape is None and not isinstance(image_source, np.ndarray):
+            _tmp = cv2.imread(str(image_source))
+            if _tmp is not None:
+                orig_shape = _tmp.shape[:2]
+        return self._compute_embeddings_from_outputs(image_inference_outputs, normalized_annotations, orig_shape=orig_shape)
 
     def _embedding_from_feature_vectors(
         self, feature_vectors: List[torch.Tensor]
@@ -283,25 +288,58 @@ class YoloEmbeddingsProducer:
         self,
         image_inference_outputs: Dict[str, np.ndarray],
         normalized_annotations,
+        orig_shape: Optional[Tuple[int, int]] = None,
     ) -> Dict[Annotation, Union[np.ndarray, List[np.ndarray]]]:
         annotations = list(normalized_annotations)
         if not annotations:
             return {}
+
+        # Compute letterbox parameters so we can map original-normalised bbox
+        # coords into letterboxed feature-map space.  Mirrors pre_transform_image().
+        if orig_shape is not None:
+            orig_h, orig_w = orig_shape
+            imgsz_h, imgsz_w = self.imgsz[0], self.imgsz[1]
+            r = min(imgsz_h / orig_h, imgsz_w / orig_w)
+            new_unpad_w = int(round(orig_w * r))
+            new_unpad_h = int(round(orig_h * r))
+            dw = (imgsz_w - new_unpad_w) / 2
+            dh = (imgsz_h - new_unpad_h) / 2
+            pad_left = round(dw - 0.1)
+            pad_top  = round(dh - 0.1)
 
         output_size = self.EMBEDDING_TENSORS_HW_RESOLUTION_BEFORE_FLATTENING
         rois_per_layer: List[torch.Tensor] = []
         for output_tensor_name in self._layer_output_tensor_names_in_order:
             output_array = image_inference_outputs[output_tensor_name]
             input_tensor = torch.from_numpy(output_array).to(torch.float32)
-            _, _, h, w = output_array.shape
-            rois = torch.tensor(
-                [
-                    [0, w * ann.bbox.x_min, h * ann.bbox.y_min, w * ann.bbox.x_max, h * ann.bbox.y_max]
-                    for ann in annotations
-                ],
-                dtype=input_tensor.dtype,
-                device=input_tensor.device,
-            )
+            _, _, fm_h, fm_w = output_array.shape
+            if orig_shape is not None:
+                # Correct mapping: norm-orig → letterboxed pixel → feature-map pixel
+                # x_lb = xn * orig_w * r + pad_left;  x_fm = x_lb * fm_w / imgsz_w
+                sx = orig_w * r * fm_w / imgsz_w
+                sy = orig_h * r * fm_h / imgsz_h
+                ox = pad_left * fm_w / imgsz_w
+                oy = pad_top  * fm_h / imgsz_h
+                rois = torch.tensor(
+                    [
+                        [0,
+                         ann.bbox.x_min * sx + ox, ann.bbox.y_min * sy + oy,
+                         ann.bbox.x_max * sx + ox, ann.bbox.y_max * sy + oy]
+                        for ann in annotations
+                    ],
+                    dtype=input_tensor.dtype,
+                    device=input_tensor.device,
+                )
+            else:
+                rois = torch.tensor(
+                    [
+                        [0, fm_w * ann.bbox.x_min, fm_h * ann.bbox.y_min,
+                            fm_w * ann.bbox.x_max, fm_h * ann.bbox.y_max]
+                        for ann in annotations
+                    ],
+                    dtype=input_tensor.dtype,
+                    device=input_tensor.device,
+                )
             rois_per_layer.append(
                 roi_align(
                     input_tensor,
@@ -541,6 +579,7 @@ class YoloEmbeddingsProducer:
 
                     annotation_dict = self._compute_embeddings_from_outputs(
                         per_img_outputs, normalized_annotations,
+                        orig_shape=orig_imgs[idx].shape[:2],
                     )
 
                     for annotation, embedding in annotation_dict.items():
