@@ -27,6 +27,14 @@ parser.add_argument(
         "--train-subdir (e.g. train, train2017). Output: {stem}_{to}_{split_name}.txt."
     ),
 )
+parser.add_argument(
+    "--pseudo-mean-conf",
+    action="store_true",
+    help=(
+        "No-GT selection: score each image by mean prediction confidence; sort ascending "
+        "(lowest first). Empty predictions → bg, score 1.0 (not prioritized)."
+    ),
+)
 
 args = parser.parse_args()
 
@@ -42,6 +50,7 @@ cleanup = args.cleanup
 seg2line = args.seg2line
 predict_device = args.device
 train_list_stem = args.train_subdir
+pseudo_mean_conf = args.pseudo_mean_conf
 
 # # CLI arguments
 
@@ -83,7 +92,8 @@ num_total = len(default_split_lst) * (to_fraction - from_fraction)
 bg_num = int(num_total * bg2all_ratio)
 frg_num = int(num_total - bg_num)
 
-inference_list = list(set(default_split_lst) - set(from_split_lst))
+# sorted() for reproducible ordering when many samples tie on score (set order is arbitrary)
+inference_list = sorted(set(default_split_lst) - set(from_split_lst))
 
 work_dir = os.path.join(dataset_folder, ".conf_criteria_work")
 os.makedirs(work_dir, exist_ok=True)
@@ -257,45 +267,59 @@ def fscore(tp, fp, fn, eps=1e-6):
     return (2 * tp + eps) / (2 * tp + fp + fn + eps)
 
 
+def _pred_conf(p):
+    return float(p.conf) if p.conf is not None else 0.0
+
+
 for img_path in tqdm(inference_list):
     sample = Sample()
     sample.filepath = img_path
     name = os.path.basename(img_path)
 
     pred_path = os.path.join(preds_folder, jpg2txt(name))
-    label_path = jpg2txt(dataset_folder + img_path[1:])
 
     if not os.path.exists(pred_path):
         open(pred_path, "a").close()
 
-    tp = fp = fn = 0
-
     preds_anno = txt2anno(pred_path)
-    labels_anno = txt2anno(
-        label_path, seg2line=seg2line, shape=get_shape(txt2jpg(label_path))
-    )
-    if len(labels_anno) == 0:
-        sample.status = "bg"
-        fp += sum([x.conf for key in preds_anno for x in preds_anno[key]])
+
+    if pseudo_mean_conf:
+        confs = [_pred_conf(x) for key in preds_anno for x in preds_anno[key]]
+        if len(confs) == 0:
+            sample.status = "bg"
+            sample.fscore = 1.0
+        else:
+            sample.status = "frg"
+            sample.fscore = sum(confs) / len(confs)
     else:
+        label_path = jpg2txt(dataset_folder + img_path[1:])
+        tp = fp = fn = 0
+        labels_anno = txt2anno(
+            label_path, seg2line=seg2line, shape=get_shape(txt2jpg(label_path))
+        )
+        if len(labels_anno) == 0:
+            sample.status = "bg"
+            fp += sum(_pred_conf(x) for key in preds_anno for x in preds_anno[key])
+        else:
 
-        for key in preds_anno:
-            if key in labels_anno:
-                for pred in preds_anno[key]:
-                    found = False
-                    for label in labels_anno[key]:
-                        if bb_iou(pred.bbox, label.bbox) > iou_threshold:
-                            tp += pred.conf
-                            labels_anno[key].remove(label)
-                            found = True
-                            break
-                    if not found:
-                        fp += pred.conf
-            else:
-                fp += sum([x.conf for x in preds_anno[key]])
-        fn += sum([1 for key in labels_anno for x in labels_anno[key]])
+            for key in preds_anno:
+                if key in labels_anno:
+                    for pred in preds_anno[key]:
+                        found = False
+                        for label in labels_anno[key]:
+                            if bb_iou(pred.bbox, label.bbox) > iou_threshold:
+                                tp += _pred_conf(pred)
+                                labels_anno[key].remove(label)
+                                found = True
+                                break
+                        if not found:
+                            fp += _pred_conf(pred)
+                else:
+                    fp += sum(_pred_conf(x) for x in preds_anno[key])
+            fn += sum([1 for key in labels_anno for x in labels_anno[key]])
 
-    sample.fscore = fscore(tp, fp, fn)
+        sample.fscore = fscore(tp, fp, fn)
+
     samples.append(sample)
 
 prettyprint("Collecting stats...")

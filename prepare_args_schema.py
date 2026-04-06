@@ -10,6 +10,7 @@ PREPARE_BOOL_KEYS = frozenset(
         "from_predictions",
         "separate_maps_voting",
         "time",
+        "pseudo_mean_conf",
     }
 )
 
@@ -34,4 +35,4 @@ PREPARE_VALUE_KEYS = frozenset(
 )
 
 PREPARE_KNOWN_KEYS = PREPARE_BOOL_KEYS | PREPARE_VALUE_KEYS | frozenset({"roi_hw"})
-CONF_CRITERIA_PREPARE_KEYS = frozenset({"seg2line", "cleanup"})
+CONF_CRITERIA_PREPARE_KEYS = frozenset({"seg2line", "cleanup", "pseudo_mean_conf"})
