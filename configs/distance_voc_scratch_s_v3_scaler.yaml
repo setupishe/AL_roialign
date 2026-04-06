@@ -16,7 +16,7 @@ split_name: distance_s_scratch_v3_scaler
 time: true
 
 prepare_args:
-  seg2line: true
+  seg2line: false
   cleanup: true
   batched_inference: false
   index_backend: annoy
