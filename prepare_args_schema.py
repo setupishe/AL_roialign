@@ -5,6 +5,7 @@ PREPARE_BOOL_KEYS = frozenset(
         "seg2line",
         "cleanup",
         "skip_pca",
+        "use_standard_scaler",
         "coarse_to_fine",
         "from_predictions",
         "separate_maps_voting",

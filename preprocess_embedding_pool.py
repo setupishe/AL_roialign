@@ -6,6 +6,7 @@ from tqdm import tqdm
 import torch
 from torch.utils.data import Dataset, DataLoader
 from sklearn.decomposition import IncrementalPCA
+from sklearn.preprocessing import StandardScaler
 from torch.utils.data.dataloader import default_collate
 import shutil
 import joblib
@@ -81,8 +82,10 @@ class EmbeddingPoolPreprocessor:
         target_length: int = 512,
         batch_size: int = 512,
         copy_image=True,
+        use_standard_scaler: bool = False,
     ):
         self.copy_image = copy_image
+        self.use_standard_scaler = use_standard_scaler
         self.embeddings_source = embeddings_source
         print(stylish_text("Collecting embedding file paths", TextStyles.OKBLUE))
         embeddings_dataset = VectorDataset(embeddings_source)
@@ -100,6 +103,7 @@ class EmbeddingPoolPreprocessor:
 
         self.output_dir = Path(output_dir)
         self.expected_pca_model_path = Path(f"{output_dir}_PCA_model.joblib")
+        self.expected_scaler_model_path = Path(f"{output_dir}_StandardScaler_model.joblib")
 
     def run_dimension_reduction(self, mode: str = "PCA") -> None:
         """
@@ -167,6 +171,20 @@ class EmbeddingPoolPreprocessor:
             stylish_text("Running PCA for dimensionality reduction", TextStyles.OKBLUE)
         )
 
+        # Fit StandardScaler if requested (separate pass before PCA fitting)
+        if self.use_standard_scaler:
+            if self.expected_scaler_model_path.is_file():
+                scaler = joblib.load(self.expected_scaler_model_path)
+                print(stylish_text("Loaded existing StandardScaler model", TextStyles.OKBLUE))
+            else:
+                scaler = StandardScaler()
+                print(stylish_text("Fitting StandardScaler on full embedding pool", TextStyles.OKBLUE))
+                for batch, _ in tqdm(self.dataloader, desc="Fitting StandardScaler"):
+                    scaler.partial_fit(batch.numpy())
+                joblib.dump(scaler, self.expected_scaler_model_path)
+        else:
+            scaler = None
+
         # Initialize PCA model
         if self.expected_pca_model_path.is_file():
             pca = joblib.load(self.expected_pca_model_path)
@@ -186,7 +204,8 @@ class EmbeddingPoolPreprocessor:
                         )
                     )
                     continue
-                pca.partial_fit(batch)  # Use partial_fit to accommodate large datasets
+                batch_np = scaler.transform(batch.numpy()) if scaler is not None else batch
+                pca.partial_fit(batch_np)
             joblib.dump(pca, self.expected_pca_model_path)
 
         # Transform embeddings to reduced dimensionality and save them
@@ -194,7 +213,8 @@ class EmbeddingPoolPreprocessor:
 
         print(stylish_text("Transforming embeddings and saving", TextStyles.OKBLUE))
         for batch, indices in tqdm(self.dataloader, desc="Transforming embeddings"):
-            reduced_embeddings = pca.transform(batch)
+            batch_np = scaler.transform(batch.numpy()) if scaler is not None else batch
+            reduced_embeddings = pca.transform(batch_np)
 
             for idx, reduced_embedding in zip(indices, reduced_embeddings):
                 # Use idx to access the global index in the dataset

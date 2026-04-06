@@ -30,6 +30,7 @@ if __name__ == "__main__":
     parser.add_argument("--cleanup", action="store_true")  # on/off flag
     parser.add_argument("--seg2line", action="store_true")  # on/off flag
     parser.add_argument("--skip-pca", action="store_true")  # on/off flag
+    parser.add_argument("--use-standard-scaler", action="store_true")  # normalize features before PCA fit+transform
     parser.add_argument(
         "--from-predictions",
         action="store_true",
@@ -182,6 +183,7 @@ if __name__ == "__main__":
     cleanup = args.cleanup
     seg2line = args.seg2line
     skip_pca = args.skip_pca
+    use_standard_scaler = args.use_standard_scaler
     seed = args.seed
     index_backend = args.index_backend
     coarse_to_fine = args.coarse_to_fine
@@ -533,6 +535,7 @@ if __name__ == "__main__":
                 reduced_embeds_dir,
                 target_length=512,
                 batch_size=512,
+                use_standard_scaler=use_standard_scaler,
             )
             epp.run_dimension_reduction(mode="PCA")
 
@@ -542,6 +545,7 @@ if __name__ == "__main__":
                 reduced_embeds_dir,
                 target_length=512,
                 batch_size=512,
+                use_standard_scaler=use_standard_scaler,
             )
             epp.run_dimension_reduction(mode="PCA")
 
