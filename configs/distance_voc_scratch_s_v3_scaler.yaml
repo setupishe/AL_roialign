@@ -6,7 +6,7 @@
 mode: distance
 dataset_name: VOC
 device: 0
-ranges: [0.3]
+ranges: [0.2, 0.3]
 bg2all_ratio: 0
 prepare_script: prepare_al_split.py
 weights_base_path: /home/setupishe/ultralytics/runs/detect
