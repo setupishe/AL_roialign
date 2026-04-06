@@ -1,0 +1,37 @@
+# VOC distance AL, yolov8s — v3 continuation: 0.3 -> 0.7
+# 0.3 already done (VOC_distance_0.3_s_scratch_v3 exists)
+# first_weights_template points to v3 0.3 model to continue the chain
+
+mode: distance
+dataset_name: VOC
+device: 0
+ranges: [0.3, 0.4, 0.5, 0.6, 0.7]
+bg2all_ratio: 0
+prepare_script: prepare_al_split.py
+weights_base_path: /home/setupishe/ultralytics/runs/detect
+first_weights_template: "${weights_base_path}/VOC_distance_${range}_s_scratch_v3/weights/best.pt"
+weights_template: "${weights_base_path}/VOC_distance_${range}_s_scratch_v3/weights/best.pt"
+split_name: distance_s_scratch_v3
+time: true
+
+prepare_args:
+  seg2line: false
+  cleanup: true
+  batched_inference: false
+  index_backend: annoy
+  roi_hw: [12, 6]
+  netron_layer_names: "/model.22/Concat /model.22/Concat_1 /model.22/Concat_2"
+  # skip_pca absent -> PCA enabled
+  # coarse_to_fine absent -> plain Annoy
+  # use_standard_scaler absent -> no scaler
+
+yolo_args:
+  model: yolov8s.yaml
+  pretrained: "False"
+  data: "VOC_${next_range}_${split_name}.yaml"
+  imgsz: 640
+  batch: 48
+  epochs: 65
+  seed: 0
+  name: "VOC_distance_${next_range}_s_scratch_v3"
+  device: "${device}"

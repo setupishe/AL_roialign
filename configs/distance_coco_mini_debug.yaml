@@ -1,0 +1,34 @@
+# COCO_mini debug config — 3 steps, 1 epoch, fake weights, no random training
+mode: distance
+dataset_name: COCO_mini
+device: 0
+ranges: [0.2, 0.3, 0.4]
+bg2all_ratio: 0
+prepare_script: prepare_al_split.py
+
+datasets_dir: /home/setupishe/datasets
+weights_base_path: /home/setupishe/ultralytics/runs/detect
+
+first_weights_template: "${weights_base_path}/COCO_mini_random_0.2_s_scratch/weights/best.pt"
+weights_template: "${weights_base_path}/COCO_mini_distance_${range}_s_scratch_debug/weights/best.pt"
+split_name: distance_s_scratch_debug
+
+prepare_args:
+  seg2line: true
+  cleanup: true
+  save_crops: true
+  batched_inference: false
+  index_backend: annoy
+  roi_hw: [12, 6]
+  netron_layer_names: "/model.22/Concat /model.22/Concat_1 /model.22/Concat_2"
+  train_subdir: train2017
+
+yolo_args:
+  model: yolov8s.pt
+  pretrained: "True"
+  data: "COCO_mini_${next_range}_${split_name}.yaml"
+  batch: 16
+  epochs: 2
+  seed: 0
+  name: "COCO_mini_distance_${next_range}_s_scratch_debug"
+  device: "${device}"
