@@ -9,6 +9,7 @@ bg2all_ratio: 0.0086
 prepare_script: conf_criteria.py
 
 datasets_dir: /tmp/
+ultralytics_cfg_dir: /home/vasokolovalek/ultralytics_matryoshka/ultralytics/cfg/datasets
 weights_base_path: /home/vasokolovalek/ultralytics_matryoshka/runs/detect
 
 first_weights_template: "${weights_base_path}/COCO_random_${range}_s_scratch/weights/best.pt"

@@ -10,6 +10,7 @@ bg2all_ratio: 0.0086
 prepare_script: prepare_al_split.py
 
 datasets_dir: /tmp/
+ultralytics_cfg_dir: /home/vasokolovalek/ultralytics_matryoshka/ultralytics/cfg/datasets
 weights_base_path: /home/vasokolovalek/ultralytics_matryoshka/runs/detect
 
 first_weights_template: "${weights_base_path}/COCO_random_${range}_s_scratch_matryoshka_fast/weights/best.pt"
@@ -17,7 +18,6 @@ weights_template: "${weights_base_path}/COCO_distance_${range}_s_scratch_matrE_f
 split_name: distance_matrE_fast_s_scratch
 
 prepare_args:
-  seg2line: true
   cleanup: true
   skip_pca: true
   index_backend: hnsw

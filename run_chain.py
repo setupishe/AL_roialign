@@ -225,7 +225,10 @@ def run_active_learning(cfg: dict, config_path: str) -> None:
                 "--bg2all-ratio", str(bg2all_ratio),
                 "--device", yolo_device,
                 "--train-subdir", list_stem,
+                "--datasets-dir", datasets_dir,
             ]
+            if ultralytics_cfg_dir:
+                cmd.extend(["--ultralytics-cfg-dir", ultralytics_cfg_dir])
             pa = {k: v for k, v in prepare_args.items() if k in CONF_CRITERIA_PREPARE_KEYS}
             cmd.extend(_prepare_args_to_argv(pa))
         else:

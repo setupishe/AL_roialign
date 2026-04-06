@@ -35,6 +35,16 @@ parser.add_argument(
         "(lowest first). Empty predictions → bg, score 1.0 (not prioritized)."
     ),
 )
+parser.add_argument(
+    "--datasets-dir",
+    default="/home/setupishe/datasets",
+    help="Root directory containing dataset folders. Default: /home/setupishe/datasets",
+)
+parser.add_argument(
+    "--ultralytics-cfg-dir",
+    default="/home/setupishe/ultralytics/ultralytics/cfg/datasets",
+    help="Directory containing ultralytics YAML dataset configs.",
+)
 
 args = parser.parse_args()
 
@@ -69,7 +79,7 @@ pseudo_mean_conf = args.pseudo_mean_conf
 
 iou_threshold = 0.7  # ultralytics default
 
-dataset_folder = f"/home/setupishe/datasets/{dataset_name}"
+dataset_folder = os.path.join(args.datasets_dir, dataset_name)
 to_split_rel = f"{train_list_stem}_{to_fraction}_{split_name}.txt"
 from_split = os.path.join(dataset_folder, from_split_rel)
 to_split = os.path.join(dataset_folder, to_split_rel)
@@ -341,7 +351,7 @@ with open(to_split, "w") as f:
     f.writelines([x + "\n" for x in final_list])
 
 to_yaml = f"{dataset_name}_{to_fraction}_{split_name}.yaml"
-yaml_folder = f"/home/setupishe/ultralytics/ultralytics/cfg/datasets"
+yaml_folder = args.ultralytics_cfg_dir
 original_yaml = f"{dataset_name}.yaml"
 
 
