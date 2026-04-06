@@ -191,11 +191,12 @@ def run_active_learning(cfg: dict, config_path: str) -> None:
             weights_path = f"{weights_base_path}/{dataset_name}_{folder_name}_{range_val}/weights/best.pt"
 
         split_root = Path(datasets_dir) / dataset_name
-        # conf_criteria: list filenames follow prepare_args.train_subdir (e.g. train2017).
-        # prepare_al_split / others: unchanged historical train_*.txt names.
+        # First step: seed split is named after train_subdir (e.g. train2017_0.2.txt for COCO).
+        # Non-first steps with prepare_al_split: output is always "train" prefix.
+        # conf_criteria.py: uses train_subdir for both first and non-first (it saves with that prefix).
         list_stem = (
             str(prepare_args.get("train_subdir", "train"))
-            if prepare_script == "conf_criteria.py"
+            if (prepare_script == "conf_criteria.py" or is_first)
             else "train"
         )
         from_split = (
