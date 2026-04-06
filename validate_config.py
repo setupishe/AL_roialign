@@ -58,16 +58,38 @@ def is_random_train(cfg: dict) -> bool:
     return cfg.get("type") == "random_train"
 
 
+def _parse_matryoshka_list(s: str) -> list:
+    """Parse '[0.2,0.4,1.0]' or '8,4,1' into a list."""
+    return [x.strip() for x in s.strip("[]").split(",") if x.strip()]
+
+
 # ---------------------------------------------------------------------------
 # Rules
 # ---------------------------------------------------------------------------
 
+def check_matryoshka_weights(yolo: dict) -> None:
+    """RULE 9: matryoshka_weights length must match matryoshka_granularity_divs length."""
+    divs_raw = yolo.get("matryoshka_granularity_divs")
+    weights_raw = yolo.get("matryoshka_weights")
+    if divs_raw is None or weights_raw is None:
+        return
+    divs = _parse_matryoshka_list(str(divs_raw))
+    weights = _parse_matryoshka_list(str(weights_raw))
+    if len(divs) != len(weights):
+        err(
+            f"[matr_weights_len] matryoshka_weights has {len(weights)} elements {weights} "
+            f"but matryoshka_granularity_divs has {len(divs)} levels {divs}. "
+            f"Lengths must match."
+        )
+
+
 def check(cfg: dict, path: Path) -> None:
     if is_random_train(cfg):
-        # random_train configs are a different format — only check seed
+        # random_train configs are a different format — only check seed + matryoshka
         yolo = cfg.get("yolo_args", {})
         if yolo.get("seed") is None:
             warn("[no_seed] yolo_args.seed absent — results not reproducible.")
+        check_matryoshka_weights(yolo)
         return
 
     dataset = cfg.get("dataset_name", "")
@@ -142,6 +164,11 @@ def check(cfg: dict, path: Path) -> None:
             f"[no_layers] mode=distance, no netron_layer_names — embeddings from default layers. "
             f"Confirm this is intended."
         )
+
+    # ------------------------------------------------------------------
+    # RULE 9: matryoshka_weights length must match granularity_divs length
+    # ------------------------------------------------------------------
+    check_matryoshka_weights(yolo)
 
     # ------------------------------------------------------------------
     # RULE 8: COCO without train2017 subdir
