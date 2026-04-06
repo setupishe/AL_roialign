@@ -1,0 +1,35 @@
+# COCO distance AL chain, yolov8s, vanilla (no matryoshka), from scratch — work machine
+# Base: COCO_random_0.2_s_scratch
+
+mode: distance
+dataset_name: COCO2017
+device: 1
+ranges: [0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
+bg2all_ratio: 0.0086
+prepare_script: prepare_al_split.py
+
+datasets_dir: /tmp/
+weights_base_path: /home/vasokolovalek/ultralytics_matryoshka/runs/detect
+
+first_weights_template: "${weights_base_path}/COCO_random_${range}_s_scratch/weights/best.pt"
+weights_template: "${weights_base_path}/COCO_distance_${range}_s_scratch/weights/best.pt"
+split_name: distance_s_scratch
+
+prepare_args:
+  seg2line: true
+  cleanup: true
+  batched_inference: false
+  index_backend: annoy
+  roi_hw: [12, 6]
+  netron_layer_names: "/model.22/Concat /model.22/Concat_1 /model.22/Concat_2"
+  train_subdir: train2017
+
+yolo_args:
+  model: yolov8s.yaml
+  pretrained: "False"
+  data: "COCO2017_${next_range}_${split_name}.yaml"
+  batch: 48
+  epochs: 65
+  seed: 0
+  device: "${device}"
+  name: "COCO_distance_${next_range}_s_scratch"
