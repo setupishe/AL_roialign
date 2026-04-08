@@ -2,11 +2,11 @@ mode: distance
 dataset_name: VOC
 device: 0
 plots: false
-ranges: [0.2, 0.3]
+ranges: [0.3, 0.4, 0.5, 0.6, 0.7]
 bg2all_ratio: 0
 prepare_script: prepare_al_split.py
 weights_base_path: /home/setupishe/ultralytics/runs/detect
-first_weights_template: "${weights_base_path}/VOC_random_${range}_s_scratch/weights/best.pt"
+first_weights_template: "${weights_base_path}/VOC_distance_${range}_s_scratch_v3_rand_subset/weights/best.pt"
 weights_template: "${weights_base_path}/VOC_distance_${range}_s_scratch_v3_rand_subset/weights/best.pt"
 split_name: distance_s_scratch_v3_rand_subset
 time: true
