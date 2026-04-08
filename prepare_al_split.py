@@ -263,27 +263,80 @@ if __name__ == "__main__":
     if log_step_times:
         atexit.register(timer.write)
 
-    def check_busy():
-        while True:
-            embeds_names = glob.glob(f"{datasets_dir}/*embeds*")
-            if not embeds_names:
-                break
-            # Own split — always fine
-            if any(split_name in x for x in embeds_names):
-                break
-            # Foreign dirs: only block if actively being written (no _DONE.json)
-            active_foreign = [
-                x for x in embeds_names
-                if not os.path.exists(os.path.join(x, "_DONE.json"))
-            ]
-            if not active_foreign:
-                break
-            print(active_foreign)
-            print("waiting 1 more minute, someone else is active learning too...")
-            time.sleep(60)
+    def _acquire_lock(lock_path: str, poll_seconds: int = 30) -> None:
+        """
+        Per-run filesystem lock.
+        Prevents two concurrent runs from using the same (dataset_name, from_fraction, split_name)
+        working dirs, while allowing parallel runs with different split_name.
+        """
+        def _pid_is_alive(pid: int) -> bool:
+            try:
+                os.kill(int(pid), 0)
+                return True
+            except ProcessLookupError:
+                return False
+            except PermissionError:
+                # Process exists but we may not signal it; treat as alive.
+                return True
+            except Exception:
+                # Unknown error: be conservative (treat as alive).
+                return True
 
-    check_busy()
-    timer.mark("check_busy")
+        lock_path = str(lock_path)
+        os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+        payload = f"pid={os.getpid()}\nstarted_unix={int(time.time())}\n"
+        while True:
+            try:
+                fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                with os.fdopen(fd, "w") as f:
+                    f.write(payload)
+                break
+            except FileExistsError:
+                # Another run owns this split; if it's stale (pid not alive), remove it.
+                stale = False
+                try:
+                    with open(lock_path, "r") as f:
+                        txt = f.read()
+                    pid = None
+                    for line in txt.splitlines():
+                        if line.startswith("pid="):
+                            pid = int(line.split("=", 1)[1].strip())
+                            break
+                    if pid is not None and (not _pid_is_alive(pid)):
+                        stale = True
+                except Exception:
+                    stale = False
+
+                if stale:
+                    try:
+                        os.remove(lock_path)
+                        print(f"Removed stale lock: {lock_path}")
+                        continue
+                    except Exception:
+                        pass
+
+                print(f"Lock exists: {lock_path}")
+                print(f"waiting {poll_seconds} seconds, same split is running...")
+                time.sleep(poll_seconds)
+
+        def _release_lock():
+            try:
+                if os.path.exists(lock_path):
+                    os.remove(lock_path)
+            except Exception:
+                pass
+
+        atexit.register(_release_lock)
+
+    # Lock is per (dataset_name, from_fraction, split_name) to allow safe parallel ablations.
+    lock_path = os.path.join(
+        datasets_dir,
+        dataset_name,
+        ".al_prepare_locks",
+        f"{from_fraction}_{split_name}.lock",
+    )
+    _acquire_lock(lock_path)
+    timer.mark("acquire_lock")
 
     with open(txt_path, "r") as f:
         lines = f.readlines()
@@ -349,7 +402,12 @@ if __name__ == "__main__":
 
     print("\n===============Infering model on all available data...===============")
 
-    embeds_dir = f"{datasets_dir}/embeds_{from_fraction}_{split_name}"
+    # IMPORTANT: keep embeds dirs dataset-scoped to support parallel runs across datasets.
+    embeds_dir = os.path.join(
+        datasets_dir,
+        dataset_name,
+        f"embeds_{from_fraction}_{split_name}",
+    )
     print("Estimating total embeds amount...")
     expected_embeddings_files = None
     if from_annotations_in_dir:
@@ -456,8 +514,10 @@ if __name__ == "__main__":
 
     print("\n===============Preprocessing embeds with PCA...===============")
     embeddings_source = embeds_dir
-    reduced_embeds_dir = (
-        f"{datasets_dir}/reduced_embeds_{from_fraction}_{split_name}"
+    reduced_embeds_dir = os.path.join(
+        datasets_dir,
+        dataset_name,
+        f"reduced_embeds_{from_fraction}_{split_name}",
     )
 
     preprocess_embeds = True
@@ -747,8 +807,12 @@ if __name__ == "__main__":
         shutil.rmtree(embeds_dir)
         shutil.rmtree(reduced_embeds_dir)
 
-        for file in glob.glob(f"{datasets_dir}/*joblib"):
-            os.remove(file)
+        # Only remove joblib models created for THIS reduced_embeds_dir.
+        pca_joblib = f"{reduced_embeds_dir}_PCA_model.joblib"
+        scaler_joblib = f"{reduced_embeds_dir}_StandardScaler_model.joblib"
+        for file in [pca_joblib, scaler_joblib]:
+            if os.path.exists(file):
+                os.remove(file)
 
         os.remove(first_list_path)
         os.remove(second_list_path)
