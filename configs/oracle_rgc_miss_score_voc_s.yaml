@@ -2,6 +2,7 @@
 # Baseline: VOC_random_0.3_s (peak mAP50-95 = 0.5916)
 # Oracle split: use prepare_al_split --mode rgc or run_chain with mode: rgc
 type: random_train
+plots: false
 fractions: [0.3]
 
 yolo_args:

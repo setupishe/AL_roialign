@@ -334,9 +334,7 @@ for img_path in tqdm(inference_list):
 
 prettyprint("Collecting stats...")
 sorted_samples = sorted(samples, key=lambda x: x.fscore)
-import matplotlib.pyplot as plt
 
-fscores = [x.fscore for x in sorted_samples]
 bgs, frgs = [], []
 
 for sample in sorted_samples:

@@ -2,6 +2,7 @@
 # Replicates VOC_random_*_m_matryoshka_everything runs with seed=1 for variance analysis
 # Based on confirmed args.yaml from existing seed=0 runs
 type: random_train
+plots: false
 fractions: [0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
 
 yolo_args:

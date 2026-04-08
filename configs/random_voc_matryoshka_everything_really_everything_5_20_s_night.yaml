@@ -1,4 +1,5 @@
 type: random_train
+plots: false
 fractions: [0.05, 0.075, 0.1, 0.125, 0.15, 0.175, 0.2]
 
 yolo_args:

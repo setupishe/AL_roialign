@@ -1,21 +1,13 @@
-# COCO distance AL chain, yolov8s, MatrE FAST, from scratch — work machine
-# Base: COCO_random_0.2_s_scratch_matryoshka_fast
-# Runs after random_coco_s_scratch_matryoshka_fast_wm completes
-
 mode: distance
-dataset_name: COCO2017
+dataset_name: VOC
 device: 0
 plots: false
 ranges: [0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
-bg2all_ratio: 0.0086
+bg2all_ratio: 0
 prepare_script: prepare_al_split.py
-
-datasets_dir: /tmp/
-ultralytics_cfg_dir: /home/vasokolovalek/ultralytics_matryoshka/ultralytics/cfg/datasets
-weights_base_path: /home/vasokolovalek/ultralytics_matryoshka/runs/detect
-
-first_weights_template: "${weights_base_path}/COCO_random_${range}_s_scratch_matryoshka_fast/weights/best.pt"
-weights_template: "${weights_base_path}/COCO_distance_${range}_s_scratch_matrE_fast/weights/best.pt"
+weights_base_path: /home/setupishe/ultralytics/runs/detect
+first_weights_template: "${weights_base_path}/VOC_random_${range}_s_scratch_matryoshka_fast/weights/best.pt"
+weights_template: "${weights_base_path}/VOC_distance_${range}_s_scratch_matrE_fast/weights/best.pt"
 split_name: distance_matrE_fast_s_scratch
 
 prepare_args:
@@ -27,17 +19,16 @@ prepare_args:
   io_workers: 4
   roi_hw: [4, 4]
   netron_layer_names: "/model.15/cv2/act/Mul /model.18/cv2/act/Mul /model.21/cv2/act/Mul"
-  train_subdir: train2017
 
 yolo_args:
   model: yolov8s.yaml
   pretrained: "False"
-  data: "COCO2017_${next_range}_${split_name}.yaml"
+  data: "VOC_${next_range}_${split_name}.yaml"
   batch: 48
   epochs: 65
   seed: 0
   device: "${device}"
-  name: "COCO_distance_${next_range}_s_scratch_matrE_fast"
+  name: "VOC_distance_${next_range}_s_scratch_matrE_fast"
   matryoshka: "True"
   matryoshka_shared_assign: "True"
   matryoshka_bn_aux_freeze: "True"

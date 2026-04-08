@@ -3,6 +3,7 @@
 # matryoshka_granularity_divs:"8,4,1" — 3-level hierarchy (drops the 2x level)
 
 type: random_train
+plots: false
 fractions: [0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
 
 yolo_args:

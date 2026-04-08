@@ -1,6 +1,7 @@
 # COCO random baseline, yolov8s — TRUE from scratch (yolov8s.yaml, no pretrained weights)
 # Fractions limited to 0.2 and 0.3 for scratch comparison
 type: random_train
+plots: false
 fractions: [0.2, 0.3]
 
 yolo_args:

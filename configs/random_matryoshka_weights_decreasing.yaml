@@ -1,6 +1,7 @@
 # Replaces: matryoshka_random_chain_run.sh
 # Sequential random-split baseline training with decreasing Matryoshka weights (yolov8s)
 type: random_train
+plots: false
 fractions: [0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
 
 yolo_args:

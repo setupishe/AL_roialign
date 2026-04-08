@@ -1,6 +1,7 @@
 bg2all_ratio: 0
 dataset_name: VOC
 device: 0
+plots: false
 first_weights_template: ${weights_base_path}/VOC_random_${range}_s_matryoshka_everything_really_everything_5_20/weights/best.pt
 mode: distance
 prepare_args:

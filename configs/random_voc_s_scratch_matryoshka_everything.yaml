@@ -1,6 +1,7 @@
 # VOC random baseline, yolov8s, full Matryoshka, from scratch
 # Fractions 0.2 and 0.3 only
 type: random_train
+plots: false
 fractions: [0.2, 0.3]
 
 yolo_args:

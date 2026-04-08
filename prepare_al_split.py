@@ -137,7 +137,7 @@ if __name__ == "__main__":
         "--seed",
         type=int,
         default=42,
-        help="Random seed for background image sampling (default: 42).",
+        help="Random seed for background sampling and PCA subset sampling (default: 42).",
     )
     parser.add_argument(
         "--train-subdir",
@@ -237,10 +237,10 @@ if __name__ == "__main__":
         )
         raise SystemExit(0)
     
-    # Set random seed for reproducible background sampling
+    # Set random seed for reproducible background/PCA subset sampling
     import random
     random.seed(seed)
-    print(f"Set random seed to {seed} for background sampling")
+    print(f"Set random seed to {seed} for background and PCA subset sampling")
 
     def _done_path(folder: str) -> str:
         return os.path.join(folder, "_DONE.json")
@@ -517,17 +517,23 @@ if __name__ == "__main__":
                 f"temp_folder_{from_fraction}_{split_name}",
             )
             force_mkdir(temp_folder)
-            embeds_list = glob.glob(f"{embeddings_source}/*npy")
-            for i, file in tqdm(enumerate(embeds_list)):
-                if i % 5 == 0:
-                    base = file[:-4]
-                    for ext in [".npy", ".jpg", ".txt"]:
-                        if os.path.exists(file[:-4] + ext):
-                            shutil.copy(
-                                file[:-4] + ext,
-                                os.path.join(temp_folder, os.path.basename(file))[:-4]
-                                + ext,
-                            )
+            embeds_list = sorted(glob.glob(f"{embeddings_source}/*npy"))
+            if len(embeds_list) == 0:
+                raise RuntimeError(f"No embedding files found in {embeddings_source}")
+            subset_size = max(1, (len(embeds_list) + 4) // 5)
+            subset_files = random.sample(embeds_list, subset_size)
+            print(
+                f"Sampling {subset_size}/{len(embeds_list)} embeddings for PCA fit "
+                f"using seed={seed}..."
+            )
+            for file in tqdm(subset_files):
+                base = file[:-4]
+                for ext in [".npy", ".jpg", ".txt"]:
+                    if os.path.exists(base + ext):
+                        shutil.copy(
+                            base + ext,
+                            os.path.join(temp_folder, os.path.basename(file))[:-4] + ext,
+                        )
 
             print("Training PCA on a subset...")
             epp = EmbeddingPoolPreprocessor(

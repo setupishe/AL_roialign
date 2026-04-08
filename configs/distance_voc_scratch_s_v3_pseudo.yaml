@@ -1,6 +1,5 @@
-# VOC distance AL, yolov8s — TRUE from scratch (yolov8s.yaml, no pretrained weights)
-# 0.2->0.3 done. Continuing: 0.3 -> 0.7
-# first_weights_template used for 0.2 seed (VOC_random_0.2_s_scratch); subsequent steps use weights_template
+# VOC distance AL, yolov8s — v3 pseudo: v3 pipeline (seg2line: false) + from_predictions
+# first_weights_template -> VOC_random scratch weights (seed step)
 
 mode: distance
 dataset_name: VOC
@@ -11,21 +10,21 @@ bg2all_ratio: 0
 prepare_script: prepare_al_split.py
 weights_base_path: /home/setupishe/ultralytics/runs/detect
 first_weights_template: "${weights_base_path}/VOC_random_${range}_s_scratch/weights/best.pt"
-weights_template: "${weights_base_path}/VOC_distance_${range}_s_scratch_pseudo/weights/best.pt"
-split_name: distance_s_scratch_pseudo
+weights_template: "${weights_base_path}/VOC_distance_${range}_s_scratch_v3_pseudo/weights/best.pt"
+split_name: distance_s_scratch_v3_pseudo
 time: true
 
 prepare_args:
-  seg2line: true
+  seg2line: false
   cleanup: true
-  save_crops: true
   batched_inference: false
   index_backend: annoy
   roi_hw: [12, 6]
   netron_layer_names: "/model.22/Concat /model.22/Concat_1 /model.22/Concat_2"
   from_predictions: true
-  # skip_pca intentionally absent -> train PCA on 1/5 subset, apply to all
-  # coarse_to_fine intentionally absent -> old pipeline used plain Annoy search
+  # skip_pca absent -> PCA enabled
+  # coarse_to_fine absent -> plain Annoy
+  # use_standard_scaler absent -> no scaler
 
 yolo_args:
   model: yolov8s.yaml
@@ -35,5 +34,5 @@ yolo_args:
   batch: 48
   epochs: 65
   seed: 0
-  name: "VOC_distance_${next_range}_s_scratch_pseudo"
+  name: "VOC_distance_${next_range}_s_scratch_v3_pseudo"
   device: "${device}"

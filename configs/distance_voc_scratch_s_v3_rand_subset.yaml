@@ -1,8 +1,3 @@
-# VOC distance AL, yolov8s — v3: StandardScaler before PCA (deliberate, consistent at fit+transform)
-# Hypothesis: per-batch standardization in v1 accidentally improved AL via more isotropic embeddings.
-# v3 tests whether explicit StandardScaler recovers or exceeds v1 performance.
-# Smoke test: 0.2 -> 0.3 only.
-
 mode: distance
 dataset_name: VOC
 device: 0
@@ -12,8 +7,8 @@ bg2all_ratio: 0
 prepare_script: prepare_al_split.py
 weights_base_path: /home/setupishe/ultralytics/runs/detect
 first_weights_template: "${weights_base_path}/VOC_random_${range}_s_scratch/weights/best.pt"
-weights_template: "${weights_base_path}/VOC_distance_${range}_s_scratch_v3_scaler/weights/best.pt"
-split_name: distance_s_scratch_v3_scaler
+weights_template: "${weights_base_path}/VOC_distance_${range}_s_scratch_v3_rand_subset/weights/best.pt"
+split_name: distance_s_scratch_v3_rand_subset
 time: true
 
 prepare_args:
@@ -23,7 +18,6 @@ prepare_args:
   index_backend: annoy
   roi_hw: [12, 6]
   netron_layer_names: "/model.22/Concat /model.22/Concat_1 /model.22/Concat_2"
-  use_standard_scaler: true
   # skip_pca absent -> PCA enabled
   # coarse_to_fine absent -> plain Annoy
 
@@ -35,5 +29,5 @@ yolo_args:
   batch: 48
   epochs: 65
   seed: 0
-  name: "VOC_distance_${next_range}_s_scratch_v3_scaler"
+  name: "VOC_distance_${next_range}_s_scratch_v3_rand_subset"
   device: "${device}"

@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Active Learning Chain Runner — reads YAML configs and orchestrates the pipeline.
 
+Top-level YAML key `plots` applies to Ultralytics YOLO **train** only (saves training/val
+plots). Default False when omitted; repo configs set `plots: false` explicitly. If `plots`
+is already set under `yolo_args`, that value wins.
+
 Usage:
     python3 run_chain.py configs/distance_matryoshka_nested.yaml
     python3 run_chain.py configs/random_matryoshka_weights_decreasing.yaml
@@ -65,6 +69,14 @@ def expand(value: object, ctx: dict) -> str:
 def build_yolo_args(template: dict, ctx: dict) -> list[str]:
     """Return ['key=value', ...] list suitable for `yolo train`, with template expansion."""
     return [f"{k}={expand(v, ctx)}" for k, v in template.items()]
+
+
+def yolo_args_with_train_plots(yolo_template: dict, plots_train: bool) -> dict:
+    """Merge top-level `plots` into the YOLO CLI dict when `plots` is not already in yolo_args."""
+    out = dict(yolo_template)
+    if "plots" not in out:
+        out["plots"] = "True" if plots_train else "False"
+    return out
 
 
 def _prepare_args_to_argv(prepare_args: dict) -> list[str]:
@@ -155,6 +167,8 @@ def run_active_learning(cfg: dict, config_path: str) -> None:
     ultralytics_cfg_dir: str | None = cfg.get("ultralytics_cfg_dir")
     prepare_args: dict      = cfg.get("prepare_args", {})
     yolo_template: dict     = cfg.get("yolo_args", {})
+    # Top-level `plots` → Ultralytics train `plots=` when not set in yolo_args (default False).
+    plots_train: bool = bool(cfg.get("plots", False))
     if len(ranges) < 2:
         raise ValueError("`ranges` must contain at least two values (from and to).")
 
@@ -252,7 +266,9 @@ def run_active_learning(cfg: dict, config_path: str) -> None:
         subprocess.run(cmd, check=True)
 
         # ── build YOLO args ───────────────────────────────────────────────────
-        yolo_args = build_yolo_args(yolo_template, ctx)
+        yolo_args = build_yolo_args(
+            yolo_args_with_train_plots(yolo_template, plots_train), ctx
+        )
 
         # ── train ───────────────────────────────────────────────────────────
         print(f"\n── TRAIN  {next_range_str} ──────────────────────────────────")
@@ -276,6 +292,7 @@ def run_active_learning(cfg: dict, config_path: str) -> None:
 def run_random_train(cfg: dict, config_path: str) -> None:
     fractions: list  = cfg.get("fractions", [])
     yolo_template: dict = cfg.get("yolo_args", {})
+    plots_train: bool = bool(cfg.get("plots", False))
 
     print("=== Random Training Runner ===")
     print(f"Config:    {config_path}")
@@ -285,7 +302,9 @@ def run_random_train(cfg: dict, config_path: str) -> None:
     for frac in fractions:
         frac_str = str(frac)
         ctx = {"fraction": frac_str}
-        yolo_args = build_yolo_args(yolo_template, ctx)
+        yolo_args = build_yolo_args(
+            yolo_args_with_train_plots(yolo_template, plots_train), ctx
+        )
 
         print(f"── TRAIN  fraction={frac_str} ──────────────────────────")
         subprocess.run(["yolo", "train"] + yolo_args, check=True)

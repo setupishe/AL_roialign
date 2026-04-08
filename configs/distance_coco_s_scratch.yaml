@@ -5,6 +5,7 @@
 mode: distance
 dataset_name: COCO
 device: 0
+plots: false
 ranges: [0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
 bg2all_ratio: 0
 prepare_script: prepare_al_split.py

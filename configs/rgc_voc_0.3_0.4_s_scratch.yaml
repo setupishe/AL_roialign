@@ -5,6 +5,7 @@
 mode: rgc
 dataset_name: VOC
 device: 0
+plots: false
 ranges: [0.3, 0.4]
 bg2all_ratio: 0
 prepare_script: prepare_al_split.py

@@ -5,6 +5,11 @@ Config sanity checker for run_chain.py YAML configs.
 Catches the class of mistakes where flags are copy-pasted from unrelated configs
 and silently corrupt experimental conditions (e.g., seg2line=true on VOC bbox data).
 
+Top-level `plots` must appear in every config YAML as explicit `plots: false` (or true
+to opt in). It controls Ultralytics **train** plot saving only (via `plots=` on
+`yolo train`). run_chain defaults to False when the key is omitted; the repo standard
+is explicit false.
+
 Usage:
     python validate_config.py configs/my_config.yaml          # check one
     python validate_config.py configs/                        # check all in dir
@@ -84,6 +89,17 @@ def check_matryoshka_weights(yolo: dict) -> None:
 
 
 def check(cfg: dict, path: Path) -> None:
+    # ------------------------------------------------------------------
+    # RULE 0: explicit top-level plots (code default False when omitted)
+    # ------------------------------------------------------------------
+    if "plots" not in cfg:
+        err(
+            f"[plots] top-level 'plots' missing — add plots: false. "
+            f"Controls YOLO train plot saving; run_chain defaults to False when omitted."
+        )
+    elif cfg["plots"] not in (True, False):
+        err(f"[plots] 'plots' must be boolean, got {cfg['plots']!r}")
+
     if is_random_train(cfg):
         # random_train configs are a different format — only check seed + matryoshka
         yolo = cfg.get("yolo_args", {})
